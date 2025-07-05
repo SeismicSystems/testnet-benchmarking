@@ -128,7 +128,7 @@ resource "aws_instance" "multi" {
   count = var.instances_per_region
 
   ami             = data.aws_ami.amazon_linux.id
-  instance_type   = "m5.xlarge"  # x86_64 instance type
+  instance_type   = "m5.xlarge"  # x86_64 instance type (16GB RAM, 4 vCPUs)
   key_name        = aws_key_pair.deployer.key_name
   security_groups = [aws_security_group.ssh.name, aws_security_group.docker.name]
 
@@ -177,6 +177,13 @@ resource "aws_instance" "multi" {
               echo "Docker installation completed successfully!"
               EOF
   )
+
+  root_block_device {
+    volume_size = 200  # 200GB root volume (default is 8GB)
+    volume_type = "gp3"
+    encrypted   = true
+    delete_on_termination = true
+  }
 
   tags = {
     Name = "instance-${count.index}"
