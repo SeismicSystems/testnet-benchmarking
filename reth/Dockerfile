@@ -1,13 +1,13 @@
 # --- Stage 1: Prepare build dependencies with cargo-chef ---
 FROM lukemathwalker/cargo-chef:latest-rust-1 AS chef
 
-WORKDIR /workspace
+WORKDIR /app
 
 # Clone and prepare seismic-reth repo
 RUN git clone https://github.com/SeismicSystems/seismic-reth.git \
     && cd seismic-reth && git checkout seismic \
     && cp crates/optimism/chainspec/res/genesis/base.json crates/seismic/chainspec/res/genesis/dev.json
-WORKDIR /workspace/seismic-reth
+WORKDIR /app/seismic-reth
 RUN cargo chef prepare --recipe-path recipe-seismic-reth.json
 
 # Clone and prepare second repo
@@ -19,7 +19,7 @@ RUN cargo chef prepare --recipe-path recipe-seismic-reth.json
 # --- Stage 2: Build dependencies using cached layers ---
 FROM lukemathwalker/cargo-chef:latest-rust-1 AS builder
 
-WORKDIR /workspace
+WORKDIR /app
 
 # Clone repos again
 RUN git clone https://github.com/SeismicSystems/seismic-reth.git \
@@ -28,8 +28,8 @@ RUN git clone https://github.com/SeismicSystems/seismic-reth.git \
 #RUN git clone https://github.com/your-org/repo-two.git
 
 # Build dependencies for seismic-reth
-WORKDIR /workspace/seismic-reth
-COPY --from=chef /workspace/seismic-reth/recipe-seismic-reth.json recipe.json
+WORKDIR /app/seismic-reth
+COPY --from=chef /app/seismic-reth/recipe-seismic-reth.json recipe.json
 RUN cargo chef cook --recipe-path recipe.json
 
 # Build dependencies for repo-two
@@ -38,7 +38,7 @@ RUN cargo chef cook --recipe-path recipe.json
 #RUN cargo chef cook --recipe-path recipe.json
 
 # Now build both apps
-WORKDIR /workspace/seismic-reth
+WORKDIR /app/seismic-reth
 RUN cargo build --release
 
 #WORKDIR /workspace/repo-two
@@ -50,7 +50,7 @@ FROM ubuntu:latest AS runtime
 WORKDIR /app
 
 # Copy the binaries
-COPY --from=builder /workspace/seismic-reth/target/release/seismic-reth ./reth
+COPY --from=builder /app/seismic-reth/target/release/seismic-reth ./reth
 #COPY --from=builder /workspace/repo-two/target/release/repo-two-binary ./repo-two
 
 # Add non-root user (optional security)
