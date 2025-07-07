@@ -1,0 +1,253 @@
+---
+- name: Setup and generate keys on all instances
+  hosts: ec2_instances
+  become: yes
+  vars:
+    docker_image: "seismic-consensus"
+    container_name: "consensus-node"
+    engine_jwt: "{{ vault_engine_jwt | default('') }}"
+    base_port: 8080
+    base_prom_port: 9090
+    
+  tasks:
+    - name: Fail if required variables are not provided
+      fail:
+        msg: |
+          Required variables missing:
+          - GitHub PAT: {{ 'OK' if github_pat is defined else 'MISSING' }}
+          - Engine JWT: {{ 'OK' if engine_jwt != '' else 'MISSING' }}
+          
+          Please provide them using:
+          -e "github_pat=your_pat_here"
+          -e "engine_jwt=your_jwt_here"
+      when: github_pat is not defined or engine_jwt == ''
+
+    - name: Install pip (auto-detect package manager)
+      package:
+        name: python3-pip
+        state: present
+
+    - name: Install required Python packages for Docker modules
+      pip:
+        name:
+          - "requests>=2.20.0,<3.0.0"
+          - "urllib3>=1.26.0,<2.0.0"
+          - "docker>=5.0.0"
+        state: present
+
+    - name: Ensure Docker service is running
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+
+    # Handle pre-built image or build from source
+    - name: Check if pre-built image tar exists locally
+      local_action:
+        module: stat
+        path: "{{ pre_built_image_tar }}"
+      register: tar_file_check
+      when: pre_built_image_tar is defined
+      become: no
+
+    - name: Copy pre-built Docker image tar to instances
+      copy:
+        src: "{{ pre_built_image_tar }}"
+        dest: "/tmp/consensus.tar"
+      when: 
+        - pre_built_image_tar is defined
+        - tar_file_check.stat.exists
+
+    - name: Load pre-built Docker image from tar
+      docker_image:
+        name: "{{ docker_image }}"
+        load_path: "/tmp/consensus.tar"
+        source: load
+      when: pre_built_image_tar is defined
+
+    - name: Create build directory (if building from source)
+      file:
+        path: /tmp/consensus-build
+        state: directory
+        mode: '0755'
+      when: pre_built_image_tar is not defined
+
+    - name: Copy Dockerfile to EC2 instance
+      copy:
+        src: "../seismic-consensus/Dockerfile"
+        dest: "/tmp/consensus-build/Dockerfile"
+        mode: '0644'
+      when: pre_built_image_tar is not defined
+
+    - name: Build Docker image with PAT
+      docker_image:
+        name: "{{ docker_image }}"
+        build:
+          path: "/tmp/consensus-build"
+          pull: yes
+          args:
+            GITHUB_PAT: "{{ github_pat }}"
+        source: build
+        force_source: "{{ force_rebuild | default(false) }}"
+      when: pre_built_image_tar is not defined
+      # no_log: true  # Temporarily disabled to see error
+
+    # Generate keys on each instance and save to persistent storage
+    - name: Create key storage directory
+      file:
+        path: /opt/consensus/keys
+        state: directory
+        mode: '0755'
+
+    - name: Generate key and save to file
+      docker_container:
+        name: "temp-keygen-{{ ansible_hostname }}"
+        image: "{{ docker_image }}"
+        command: ["--key-path", "/app/keys/consensus.key", "keys", "generate"]
+        state: started
+        detach: no
+        auto_remove: no
+        volumes:
+          - "/opt/consensus/keys:/app/keys"
+      register: key_generation
+
+    - name: Get container logs to see what went wrong
+      command: docker logs temp-keygen-{{ ansible_hostname }}
+      register: container_logs
+      when: key_generation.container.State.ExitCode != 0
+
+    - name: Show container logs for debugging
+      debug:
+        msg: "{{ container_logs.stdout_lines }}"
+      when: key_generation.container.State.ExitCode != 0
+
+    - name: Remove temporary container
+      docker_container:
+        name: "temp-keygen-{{ ansible_hostname }}"
+        state: absent
+      ignore_errors: yes
+
+    - name: Extract public key from generation output
+      set_fact:
+        node_key: "{{ key_generation.container.Output | regex_search('Public Key: (.+)', '\\1') | first }}"
+        node_port: "{{ base_port }}"
+        #node_ip: "{{ ansible_host }}"
+        node_ip: "{{ ansible_default_ipv4.address }}"
+
+    - name: Display generated key info
+      debug:
+        msg: "Node {{ inventory_hostname }}: Key={{ node_key }}, IP={{ node_ip }}, Port={{ node_port }}"
+
+- name: Create committee file and deploy
+  hosts: ec2_instances[0]
+  become: yes
+  vars:
+    docker_image: "seismic-consensus"
+    container_name: "consensus-node"
+    engine_jwt: "{{ vault_engine_jwt | default('') }}"
+    base_port: 8080
+    base_prom_port: 9090
+    
+  tasks:
+    - name: Gather all node information
+      set_fact:
+        all_nodes: "{{ groups['ec2_instances'] | map('extract', hostvars) | list }}"
+
+    - name: Create committee.toml content
+      set_fact:
+        committee_content: |
+          validators = [
+          {% for node in all_nodes %}
+              # {{ node.inventory_hostname }}
+              ["{{ node.node_key }}", "{{ node.node_ip }}:{{ node.node_port }}"],
+          {% endfor %}
+          ]
+
+    - name: Create test_committee.toml file
+      copy:
+        content: "{{ committee_content }}"
+        dest: "/tmp/test_committee.toml"
+        mode: '0644'
+
+    - name: Display test_committee.toml content
+      debug:
+        msg: "{{ committee_content }}"
+
+    - name: Fetch test_committee.toml to local machine
+      fetch:
+        src: "/tmp/test_committee.toml"
+        dest: "./test_committee.toml"
+        flat: yes
+
+- name: Deploy consensus containers with committee file
+  hosts: ec2_instances
+  become: yes
+  vars:
+    docker_image: "seismic-consensus"
+    container_name: "consensus-node"
+    engine_jwt: "{{ vault_engine_jwt | default('') }}"
+    base_port: 8080
+    base_prom_port: 9090
+    
+  tasks:
+    - name: Copy test_committee.toml to all instances
+      copy:
+        src: "./test_committee.toml"
+        dest: "/tmp/test_committee.toml"
+        mode: '0644'
+
+    - name: Set ports for this instance
+      set_fact:
+        instance_port: "{{ base_port }}"
+        instance_prom_port: "{{ base_prom_port }}"
+
+    - name: Stop existing container
+      docker_container:
+        name: "{{ container_name }}"
+        state: absent
+      ignore_errors: yes
+
+    - name: Run consensus Docker container
+      docker_container:
+        name: "{{ container_name }}"
+        image: "{{ docker_image }}"
+        command: ["--engine-jwt", "{{ engine_jwt }}", "--port", "{{ instance_port }}", "--prom-port", "{{ instance_prom_port }}", "--key-path", "/app/keys/consensus.key", "run"]
+        state: started
+        restart_policy: unless-stopped
+        detach: yes
+        network_mode: host
+        ports:
+          - "{{ instance_port }}:{{ instance_port }}"
+          - "{{ instance_prom_port }}:{{ instance_prom_port }}"
+        volumes:
+          - "/tmp/test_committee.toml:/app/test_committee.toml:ro"
+          - "/opt/consensus/keys:/app/keys:ro"
+        log_driver: json-file
+        log_options:
+          max-size: "10m"
+          max-file: "3"
+
+    - name: Wait for container to be ready
+      wait_for:
+        port: "{{ instance_port }}"
+        #host: "{{ ansible_host }}"
+        host: "{{ ansible_default_ipv4.address }}"
+        timeout: 60
+        delay: 5
+
+    - name: Check container status
+      docker_container_info:
+        name: "{{ container_name }}"
+      register: container_info
+
+    - name: Display container status
+      debug:
+        msg: "Container {{ container_name }} on {{ inventory_hostname }} is {{ container_info.container.State.Status }} (Port: {{ instance_port }})"
+
+    - name: Show container logs
+      command: docker logs --tail 10 {{ container_name }}
+      register: container_logs
+      
+    - name: Display container logs
+      debug:
+        msg: "{{ container_logs.stdout_lines }}"

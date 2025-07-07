@@ -102,6 +102,20 @@ resource "aws_security_group" "docker" {
   }
 
   ingress {
+    from_port   = 8551
+    to_port     = 8551
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 9001
+    to_port     = 9001
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
     from_port   = 30303
     to_port     = 30303
     protocol    = "tcp"
@@ -112,6 +126,20 @@ resource "aws_security_group" "docker" {
     from_port   = 30303
     to_port     = 30303
     protocol    = "udp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 8551
+    to_port     = 8551
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    from_port   = 9090
+    to_port     = 9090
+    protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 

@@ -120,6 +120,7 @@
         image: "{{ docker_image }}"
         state: started
         restart_policy: unless-stopped
+        network_mode: host
         detach: yes
         ports:
           - "8545:8545"
