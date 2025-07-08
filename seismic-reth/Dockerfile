@@ -9,8 +9,6 @@ FROM chef AS planner
 RUN git clone https://github.com/SeismicSystems/seismic-reth.git .
 # Checkout the seismic branch
 RUN git checkout seismic
-# Copy over the base genesis
-RUN cp crates/optimism/chainspec/res/genesis/base.json crates/seismic/chainspec/res/genesis/dev.json
 # Generate recipe file
 RUN cargo chef prepare --recipe-path recipe.json
 
@@ -36,6 +34,10 @@ RUN apt-get update && apt-get -y upgrade && apt-get install -y libclang-dev pkg-
 WORKDIR /app
 # Copy the binary from builder stage
 COPY --from=builder /app/target/release/seismic-reth /app/seismic-reth
+
+# Copy the genesis file
+COPY --from=builder /app/crates/optimism/chainspec/res/genesis/base.json /app/genesis.json
+
 
 # Define the ENTRYPOINT to run the reth node with the specified arguments
 ENV HTTP_PORT=8545
@@ -63,9 +65,16 @@ ENV JWT_FILE="./jwt.hex"
 RUN echo '#!/bin/bash\n\
 # Create JWT secret file from environment variable\n\
 echo "$JWT_SECRET" > "$JWT_FILE"\n\
+# Initialize the database if not already done\n\
+if [ ! -f "/app/.initialized" ]; then\n\
+    echo "Initializing seismic-reth database..."\n\
+    ./seismic-reth init --chain /app/genesis.json\n\
+    touch /app/.initialized\n\
+fi\n\
 # Run seismic-reth with the JWT secret\n\
-exec ./seismic-reth node --authrpc.jwtsecret "$JWT_FILE" "$@"' > /app/start.sh && \
+exec ./seismic-reth node --chain /app/genesis.json --authrpc.jwtsecret "$JWT_FILE" "$@"' > /app/start.sh && \
 chmod +x /app/start.sh
+
 
 # Set the startup script as the entrypoint
 ENTRYPOINT ["/app/start.sh"]
