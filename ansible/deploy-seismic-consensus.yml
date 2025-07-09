@@ -131,8 +131,8 @@
       set_fact:
         node_key: "{{ key_generation.container.Output | regex_search('Public Key: (.+)', '\\1') | first }}"
         node_port: "{{ base_port }}"
-        #node_ip: "{{ ansible_host }}"
-        node_ip: "{{ ansible_default_ipv4.address }}"
+        node_ip: "{{ ansible_host }}"
+        #node_ip: "{{ ansible_default_ipv4.address }}"
 
     - name: Display generated key info
       debug:
@@ -207,6 +207,22 @@
         state: absent
       ignore_errors: yes
 
+    - name: Clear seismic-reth state (if requested)
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/root/.seismic/consensus"
+      when: clear_state | default(false)
+
+    - name: Display removal confirmation
+      debug:
+        msg: "Directory {{ item.item }} exists: {{ item.stat.exists }}"
+      loop: "{{ dir_check.results }}"
+      when: 
+        - clear_state | default(false)
+        - dir_check is defined
+
     - name: Run consensus Docker container
       docker_container:
         name: "{{ container_name }}"
@@ -224,7 +240,7 @@
           - "/opt/consensus/keys:/app/keys:ro"
         log_driver: json-file
         log_options:
-          max-size: "10m"
+          max-size: "50m"
           max-file: "3"
 
     - name: Wait for container to be ready

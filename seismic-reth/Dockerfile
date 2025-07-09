@@ -36,7 +36,7 @@ WORKDIR /app
 COPY --from=builder /app/target/release/seismic-reth /app/seismic-reth
 
 # Copy the genesis file
-COPY --from=builder /app/crates/optimism/chainspec/res/genesis/base.json /app/genesis.json
+COPY --from=builder /app/crates/seismic/chainspec/res/genesis/dev.json /app/genesis.json
 
 
 # Define the ENTRYPOINT to run the reth node with the specified arguments
@@ -65,14 +65,8 @@ ENV JWT_FILE="./jwt.hex"
 RUN echo '#!/bin/bash\n\
 # Create JWT secret file from environment variable\n\
 echo "$JWT_SECRET" > "$JWT_FILE"\n\
-# Initialize the database if not already done\n\
-if [ ! -f "/app/.initialized" ]; then\n\
-    echo "Initializing seismic-reth database..."\n\
-    ./seismic-reth init --chain /app/genesis.json\n\
-    touch /app/.initialized\n\
-fi\n\
 # Run seismic-reth with the JWT secret\n\
-exec ./seismic-reth node --chain /app/genesis.json --authrpc.jwtsecret "$JWT_FILE" "$@"' > /app/start.sh && \
+exec ./seismic-reth node --authrpc.jwtsecret "$JWT_FILE" "$@"' > /app/start.sh && \
 chmod +x /app/start.sh
 
 

@@ -4,3 +4,4 @@
 seismic-reth.tar
 seismic-consensus.tar
 test_committee.toml
+docker_logs/

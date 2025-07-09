@@ -1,0 +1,46 @@
+---
+- name: Download Docker logs for consensus-node container
+  hosts: ec2_instances
+  become: true
+  vars:
+    container_name: consensus-node
+    local_base_dir: "./docker_logs"
+
+  tasks:
+
+    - name: Get full container ID for {{ container_name }}
+      ansible.builtin.shell: >
+        docker inspect --format='{{ "{{.Id}}" }}' $(docker ps -qf name={{ container_name }})
+      register: container_id_raw
+      changed_when: false
+
+    - name: Ensure container ID was found
+      ansible.builtin.fail:
+        msg: "No container found with name '{{ container_name }}'"
+      when: container_id_raw.stdout | trim == ""
+
+    - name: Set container_id fact
+      ansible.builtin.set_fact:
+        container_id: "{{ container_id_raw.stdout | trim }}"
+
+    - name: Ensure local log directory exists
+      delegate_to: localhost
+      become: false
+      ansible.builtin.file:
+        path: "{{ local_base_dir }}/{{ inventory_hostname }}"
+        state: directory
+        mode: '0755'
+
+    - name: Find all Docker log files for the container
+      ansible.builtin.find:
+        paths: "/var/lib/docker/containers/{{ container_id }}"
+        patterns: "*.log*"
+      register: log_files
+
+    - name: Fetch Docker log files to control machine
+      ansible.builtin.fetch:
+        src: "{{ item.path }}"
+        dest: "{{ local_base_dir }}/{{ inventory_hostname }}/"
+        flat: yes
+      with_items: "{{ log_files.files }}"
+

@@ -66,6 +66,7 @@
         name: "{{ docker_image }}"
         load_path: "/tmp/seismic-reth.tar"
         source: load
+        force_source: yes
       when: pre_built_image_tar is defined
 
     - name: Clean up tar file
@@ -113,6 +114,23 @@
         name: "{{ container_name }}"
         state: absent
       ignore_errors: yes
+
+    - name: Clear seismic-reth state (if requested)
+      file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/root/.cache/reth"
+        - "/root/.local/share/reth"
+      when: clear_state | default(false)
+
+    - name: Display removal confirmation
+      debug:
+        msg: "Directory {{ item.item }} exists: {{ item.stat.exists }}"
+      loop: "{{ dir_check.results }}"
+      when: 
+        - clear_state | default(false)
+        - dir_check is defined
 
     - name: Run seismic-reth Docker container
       docker_container:

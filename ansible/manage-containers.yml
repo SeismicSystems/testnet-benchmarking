@@ -1,0 +1,51 @@
+---
+- name: Stop Docker containers on EC2 instances
+  hosts: ec2_instances
+  become: yes
+  vars:
+    # Container names to stop
+    containers:
+      - seismic-reth
+      - consensus-node
+    
+  tasks:
+    - name: Install required Python packages for Docker modules
+      pip:
+        name:
+          - "requests>=2.20.0,<3.0.0"
+          - "urllib3>=1.26.0,<2.0.0"
+          - "docker>=5.0.0"
+        state: present
+
+    - name: Stop specific containers
+      docker_container:
+        name: "{{ item }}"
+        state: stopped
+      loop: "{{ containers }}"
+      ignore_errors: yes
+
+    - name: Remove specific containers
+      docker_container:
+        name: "{{ item }}"
+        state: absent
+      loop: "{{ containers }}"
+      ignore_errors: yes
+      when: remove_containers | default(false)
+
+    - name: Stop all running containers (if requested)
+      shell: docker stop $(docker ps -q)
+      ignore_errors: yes
+      when: stop_all | default(false)
+
+    - name: Remove all containers (if requested)
+      shell: docker rm $(docker ps -aq)
+      ignore_errors: yes
+      when: remove_all | default(false)
+
+    - name: Show remaining running containers
+      command: docker ps
+      register: running_containers
+
+    - name: Display running containers
+      debug:
+        msg: "{{ running_containers.stdout_lines }}"
