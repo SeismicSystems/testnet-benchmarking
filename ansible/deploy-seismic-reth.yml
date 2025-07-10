@@ -137,7 +137,7 @@
         name: "{{ container_name }}"
         image: "{{ docker_image }}"
         state: started
-        restart_policy: unless-stopped
+        restart_policy: no
         network_mode: host
         detach: yes
         ports:

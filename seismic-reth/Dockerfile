@@ -9,9 +9,13 @@ FROM chef AS planner
 RUN git clone https://github.com/SeismicSystems/seismic-reth.git .
 # Checkout the seismic branch
 RUN git checkout seismic
+
+RUN apt-get update && apt-get install -y curl
+RUN curl -o crates/seismic/chainspec/res/genesis/dev.json \
+    https://testnet-benchmarking.s3.us-west-2.amazonaws.com/dev.json
+
 # Generate recipe file
 RUN cargo chef prepare --recipe-path recipe.json
-
 
 FROM chef AS builder
 # Install git and other dependencies

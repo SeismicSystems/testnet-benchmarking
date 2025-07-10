@@ -1,46 +1,87 @@
 ---
-- name: Download Docker logs for consensus-node container
+- name: Download Docker logs from consensus-node and seismic-reth
   hosts: ec2_instances
   become: true
   vars:
-    container_name: consensus-node
     local_base_dir: "./docker_logs"
 
   tasks:
 
-    - name: Get full container ID for {{ container_name }}
+    ##########################################
+    # Logs from consensus-node
+    ##########################################
+    - name: Get full container ID for consensus-node
       ansible.builtin.shell: >
-        docker inspect --format='{{ "{{.Id}}" }}' $(docker ps -qf name={{ container_name }})
-      register: container_id_raw
+        docker inspect --format='{{ "{{.Id}}" }}' $(docker ps -qf name=consensus-node)
+      register: consensus_id_raw
       changed_when: false
 
-    - name: Ensure container ID was found
+    - name: Ensure container ID was found for consensus-node
       ansible.builtin.fail:
-        msg: "No container found with name '{{ container_name }}'"
-      when: container_id_raw.stdout | trim == ""
+        msg: "No container found with name 'consensus-node'"
+      when: consensus_id_raw.stdout | trim == ""
 
-    - name: Set container_id fact
+    - name: Set fact for consensus container ID
       ansible.builtin.set_fact:
-        container_id: "{{ container_id_raw.stdout | trim }}"
+        consensus_container_id: "{{ consensus_id_raw.stdout | trim }}"
 
-    - name: Ensure local log directory exists
+    - name: Ensure local log directory exists for consensus-node
       delegate_to: localhost
       become: false
       ansible.builtin.file:
-        path: "{{ local_base_dir }}/{{ inventory_hostname }}"
+        path: "{{ local_base_dir }}/{{ inventory_hostname }}/consensus-node"
         state: directory
         mode: '0755'
 
-    - name: Find all Docker log files for the container
+    - name: Find all Docker log files for consensus-node
       ansible.builtin.find:
-        paths: "/var/lib/docker/containers/{{ container_id }}"
+        paths: "/var/lib/docker/containers/{{ consensus_container_id }}"
         patterns: "*.log*"
-      register: log_files
+      register: consensus_logs
 
-    - name: Fetch Docker log files to control machine
+    - name: Fetch Docker log files for consensus-node
       ansible.builtin.fetch:
         src: "{{ item.path }}"
-        dest: "{{ local_base_dir }}/{{ inventory_hostname }}/"
+        dest: "{{ local_base_dir }}/{{ inventory_hostname }}/consensus-node/"
         flat: yes
-      with_items: "{{ log_files.files }}"
+      with_items: "{{ consensus_logs.files }}"
+
+    ##########################################
+    # Logs from seismic-reth
+    ##########################################
+    - name: Get full container ID for seismic-reth
+      ansible.builtin.shell: >
+        docker inspect --format='{{ "{{.Id}}" }}' $(docker ps -qf name=seismic-reth)
+      register: reth_id_raw
+      changed_when: false
+
+    - name: Ensure container ID was found for seismic-reth
+      ansible.builtin.fail:
+        msg: "No container found with name 'seismic-reth'"
+      when: reth_id_raw.stdout | trim == ""
+
+    - name: Set fact for seismic-reth container ID
+      ansible.builtin.set_fact:
+        reth_container_id: "{{ reth_id_raw.stdout | trim }}"
+
+    - name: Ensure local log directory exists for seismic-reth
+      delegate_to: localhost
+      become: false
+      ansible.builtin.file:
+        path: "{{ local_base_dir }}/{{ inventory_hostname }}/seismic-reth"
+        state: directory
+        mode: '0755'
+
+    - name: Find all Docker log files for seismic-reth
+      ansible.builtin.find:
+        paths: "/var/lib/docker/containers/{{ reth_container_id }}"
+        patterns: "*.log*"
+      register: reth_logs
+
+    - name: Fetch Docker log files for seismic-reth
+      ansible.builtin.fetch:
+        src: "{{ item.path }}"
+        dest: "{{ local_base_dir }}/{{ inventory_hostname }}/seismic-reth/"
+        flat: yes
+      with_items: "{{ reth_logs.files }}"
 

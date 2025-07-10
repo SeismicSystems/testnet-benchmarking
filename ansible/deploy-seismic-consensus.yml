@@ -229,7 +229,7 @@
         image: "{{ docker_image }}"
         command: ["--engine-jwt", "{{ engine_jwt }}", "--port", "{{ instance_port }}", "--prom-port", "{{ instance_prom_port }}", "--key-path", "/app/keys/consensus.key", "run"]
         state: started
-        restart_policy: unless-stopped
+        restart_policy: no
         detach: yes
         network_mode: host
         ports:
