@@ -1,11 +1,15 @@
 use alloy::{
     network::EthereumWallet,
     primitives::Address,
+    providers::Provider,
     signers::local::PrivateKeySigner,
 };
 use eyre::Result;
 use std::fs;
 use rand::Rng;
+use tokio::task::JoinSet;
+use crate::MyProvider;
+
 
 /// Parse IP addresses from ansible inventory file
 pub fn parse_inventory_ips(inventory_path: &str) -> Result<Vec<String>> {
@@ -34,7 +38,7 @@ pub fn random_int(n: usize) -> usize {
 }
 
 /// Read private keys and addresses from a CSV file
-pub fn read_keys_from_file(file_path: &str) -> Result<(Vec<EthereumWallet>, Vec<Address>)> {
+pub fn read_keys_from_file(file_path: &str, limit: Option<usize>) -> Result<(Vec<EthereumWallet>, Vec<Address>)> {
     let content = fs::read_to_string(file_path)?;
     let mut keys = Vec::new();
     let mut addresses = Vec::new();
@@ -43,11 +47,12 @@ pub fn read_keys_from_file(file_path: &str) -> Result<(Vec<EthereumWallet>, Vec<
     
     let mut counter = 0;
     for (line_num, line) in content.lines().enumerate() {
-
-        counter += 1;
-        if counter > 100 {
-            break;
+        if let Some(limit) = limit {
+            if counter > limit {
+                break;
+            }
         }
+        counter += 1;
 
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
@@ -92,3 +97,68 @@ pub fn read_keys_from_file(file_path: &str) -> Result<(Vec<EthereumWallet>, Vec<
     
     Ok((keys, addresses))
 }
+
+/// Request current nonces for a list of addresses using round-robin provider selection
+/// with controlled concurrency
+pub async fn get_nonces_concurrent(
+    addresses: Vec<Address>,
+    providers: Vec<MyProvider>,
+    max_concurrent_req: usize,
+) -> Result<Vec<(Address, u64)>> {
+    let mut results = Vec::new();
+    let mut join_set = JoinSet::new();
+    let mut provider_index = 0;
+    let mut address_index = 0;
+    
+    // Process addresses in batches to control concurrency
+    while address_index < addresses.len() {
+        // Spawn up to max_concurrent_req tasks
+        while join_set.len() < max_concurrent_req && address_index < addresses.len() {
+            let address = addresses[address_index];
+            let provider = providers[provider_index].clone();
+            
+            join_set.spawn(async move {
+                match provider.get_transaction_count(address).await {
+                    Ok(nonce) => Ok((address, nonce)),
+                    Err(e) => Err(eyre::eyre!("Failed to get nonce for {}: {}", address, e))
+                }
+            });
+            
+            address_index += 1;
+            provider_index = (provider_index + 1) % providers.len();
+        }
+        
+        // Wait for some tasks to complete
+        if let Some(result) = join_set.join_next().await {
+            match result {
+                Ok(Ok((address, nonce))) => {
+                    results.push((address, nonce));
+                }
+                Ok(Err(e)) => {
+                    eprintln!("Error getting nonce: {e}");
+                }
+                Err(e) => {
+                    eprintln!("Task join error: {e}");
+                }
+            }
+        }
+    }
+    
+    // Wait for remaining tasks
+    while let Some(result) = join_set.join_next().await {
+        match result {
+            Ok(Ok((address, nonce))) => {
+                results.push((address, nonce));
+            }
+            Ok(Err(e)) => {
+                eprintln!("Error getting nonce: {e}");
+            }
+            Err(e) => {
+                eprintln!("Task join error: {e}");
+            }
+        }
+    }
+    
+    Ok(results)
+}
+

@@ -1,17 +1,34 @@
 use alloy::{
-    primitives::U256,
+    primitives::{U256, Address},
     providers::{Provider, ProviderBuilder},
 };
 use eyre::Result;
 use std::time::Duration;
 use tokio::task::JoinSet;
+use tokio::sync::mpsc;
 use alloy::network::TransactionBuilder;
-use tx_sender::utils;
+use tx_sender::{utils, MyProvider};
+use dashmap::DashMap;
+
+const MAX_CONCURRENT_TASKS: usize = 500;
+const NEW_TRANSACTION_INTERVAL: Duration = Duration::from_millis(10);
+
+
+async fn nonce_manager(providers: Vec<MyProvider>, mut rx: mpsc::Receiver<Address>, nonces: DashMap<Address, u64>) -> Result<()> {
+    while let Some(address) = rx.recv().await {
+        let provider = providers[utils::random_int(providers.len())].clone();
+        if let Ok(nonce) = provider.get_transaction_count(address).await {
+            nonces.insert(address, nonce);
+        } else {
+            println!("Failed to get nonce for address {address}");
+        }
+    }
+    Ok(())
+}
 
 
 #[tokio::main]
 async fn main() -> Result<()> {
-
     // Parse IP addresses from inventory file
     let ips = utils::parse_inventory_ips("../ansible/inventory.ini")?;
     let mut providers = Vec::new();
@@ -21,25 +38,34 @@ async fn main() -> Result<()> {
         providers.push(provider);
     }
 
-    let max_concurrent_tasks = 500;
-    let new_transaction_interval = Duration::from_millis(500);
+    let (priv_keys, addresses) = utils::read_keys_from_file("private_keys.txt", None)?;
+    let nonces = DashMap::new();
 
-    let (priv_keys, addresses) = utils::read_keys_from_file("private_keys.txt")?;
+    println!("Get initial nonces...");
+    let initial_nonces = utils::get_nonces_concurrent(addresses.clone(), providers.clone(), MAX_CONCURRENT_TASKS).await?;
+    println!("Retrieved {} nonces", initial_nonces.len());
+    for (address, nonce) in initial_nonces {
+        nonces.insert(address, nonce);
+    }
+
+    let chain_id = providers[0].get_chain_id().await.unwrap();
+
+    let (tx_nonce, rx_nonce) = mpsc::channel(100);
+    tokio::spawn(nonce_manager(providers.clone(), rx_nonce, nonces.clone()));
 
     let mut join_set = JoinSet::new();
     let mut key_index = 0;
     let mut provider_index = 0;
 
-    let mut send_interval = tokio::time::interval(new_transaction_interval);
+    let mut send_interval = tokio::time::interval(NEW_TRANSACTION_INTERVAL);
     loop {
         tokio::select! {
             // Add new tasks
             _ = send_interval.tick() => {
-                if join_set.len() < max_concurrent_tasks {
+                if join_set.len() < MAX_CONCURRENT_TASKS {
                     let wallet = priv_keys[key_index].clone();
                     let from_address = addresses[key_index];
                     let provider = providers[provider_index].clone();
-                    println!("Address {from_address}");
 
                     let mut to_index = utils::random_int(addresses.len());
                     if from_address == addresses[to_index] {
@@ -50,6 +76,8 @@ async fn main() -> Result<()> {
                     key_index = (key_index + 1) % priv_keys.len();
                     provider_index = (provider_index + 1) % providers.len();
 
+                    let tx_nonce_clone = tx_nonce.clone();
+                    let nonces_clone = nonces.clone();
                     join_set.spawn(async move {
                         let value = U256::from(10_000_000_000_000_000u128); // 0.01 ETH in wei
 
@@ -57,10 +85,14 @@ async fn main() -> Result<()> {
                         // The `from` field is automatically filled to the first signer's address (Alice).
                         let mut tx = alloy::rpc::types::TransactionRequest::default()
                             .to(to_address);
+                        
+                        let nonce = *nonces_clone.get(&from_address).unwrap();
+                        // Optimistically increment the nonce
+                        nonces_clone.insert(from_address, nonce + 1);
 
                         tx.set_value(value);
-                        tx.set_nonce(provider.get_transaction_count(from_address).await.unwrap());
-                        tx.set_chain_id(provider.get_chain_id().await.unwrap());
+                        tx.set_nonce(nonce);
+                        tx.set_chain_id(chain_id);
                         tx.set_max_priority_fee_per_gas(1_000_000_000);
                         tx.set_max_fee_per_gas(20_000_000_000);
                         tx.set_gas_limit(21_000);
@@ -85,6 +117,11 @@ async fn main() -> Result<()> {
                                 }
                             }
                             Err(e) => {
+                                // We assume that the transaction failed because the nonce,
+                                // so we send the address back to the nonce manager to update the nonce
+                                tokio::spawn(async move {
+                                    tx_nonce_clone.send(from_address).await.unwrap();
+                                });
                                 println!("❌ Failed to send transaction: {e}");
                             }
                         }
