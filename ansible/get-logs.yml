@@ -12,7 +12,7 @@
     ##########################################
     - name: Get full container ID for consensus-node
       ansible.builtin.shell: >
-        docker inspect --format='{{ "{{.Id}}" }}' $(docker ps -qf name=consensus-node)
+        docker inspect --format='{{ "{{.Id}}" }}' $(docker ps -a -qf name=consensus-node)
       register: consensus_id_raw
       changed_when: false
 
@@ -51,7 +51,7 @@
     ##########################################
     - name: Get full container ID for seismic-reth
       ansible.builtin.shell: >
-        docker inspect --format='{{ "{{.Id}}" }}' $(docker ps -qf name=seismic-reth)
+        docker inspect --format='{{ "{{.Id}}" }}' $(docker ps -a -qf name=seismic-reth)
       register: reth_id_raw
       changed_when: false
 

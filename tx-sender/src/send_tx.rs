@@ -7,14 +7,13 @@ use alloy::{
 use eyre::Result;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
-use tokio;
 
 #[tokio::main]
 async fn main() -> Result<()> {
     println!("🚀 Sending Ethereum transaction...");
 
     // Configuration
-    let rpc_url = "http://52.25.1.50:8545".parse()?;
+    let rpc_url = "http://35.160.131.58:8545".parse()?;
 
     // Create a signer from a private key (Hardhat's default private key)
     // WARNING: Use a test private key only! Never use a real private key in code
@@ -30,13 +29,13 @@ async fn main() -> Result<()> {
     // Create provider
     let provider = ProviderBuilder::new().wallet(wallet).connect_http(rpc_url);
 
-    println!("From address: {}", from_address);
-    println!("To address: {}", to_address);
+    println!("From address: {from_address}");
+    println!("To address: {to_address}");
     println!("Amount: 0.01 ETH");
 
     // Check initial balance
     let initial_balance = provider.get_balance(from_address).await?;
-    println!("Initial balance: {} wei", initial_balance);
+    println!("Initial balance: {initial_balance} wei");
 
     // Create transaction request
     let balance_before = provider.get_balance(from_address).await?;
@@ -54,7 +53,7 @@ async fn main() -> Result<()> {
         Ok(pending_tx) => {
             let tx_hash = *pending_tx.tx_hash();
             println!("✅ Transaction sent successfully!");
-            println!("Transaction hash: {}", tx_hash);
+            println!("Transaction hash: {tx_hash}");
 
             // Wait for confirmation
             println!("Waiting for confirmation...");
@@ -96,18 +95,18 @@ async fn main() -> Result<()> {
             }
 
             let total_duration = start_time.elapsed();
-            println!("Total time: {:.2?}", total_duration);
+            println!("Total time: {total_duration:.2?}");
         }
         Err(e) => {
-            println!("❌ Failed to send transaction: {}", e);
+            println!("❌ Failed to send transaction: {e}");
         }
     }
 
     // Check final balance
     let final_balance = provider.get_balance(from_address).await?;
     let spent = initial_balance.saturating_sub(final_balance);
-    println!("Final balance: {} wei", final_balance);
-    println!("Total spent: {} wei", spent);
+    println!("Final balance: {final_balance} wei");
+    println!("Total spent: {spent} wei");
 
     Ok(())
 }
