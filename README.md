@@ -139,7 +139,6 @@ Open Grafana dashboard at http://localhost:3000/ and select Prometheus as a data
 
 ### 8. Pull logs from the instances
 ```sh
-```sh
 cd ansible
 ansible-playbook -i inventory.ini get-logs.yml
 ```
