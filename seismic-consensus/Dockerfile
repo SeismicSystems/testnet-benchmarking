@@ -12,7 +12,7 @@ RUN test -n "$GITHUB_PAT" || (echo "GITHUB_PAT build argument is required" && ex
 RUN git clone https://${GITHUB_PAT}@github.com/SeismicSystems/seismic-consensus.git .
 
 # Checkout specific branch if needed
-# RUN git checkout your-branch
+RUN git checkout main
 
 # Generate recipe file
 RUN cargo chef prepare --recipe-path recipe.json

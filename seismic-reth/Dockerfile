@@ -8,7 +8,7 @@ FROM chef AS planner
 # Clone the seismic-reth repo
 RUN git clone https://github.com/SeismicSystems/seismic-reth.git .
 # Checkout the seismic branch
-RUN git checkout seismic
+RUN git checkout matthias/testing
 
 RUN apt-get update && apt-get install -y curl
 RUN curl -o crates/seismic/chainspec/res/genesis/dev.json \

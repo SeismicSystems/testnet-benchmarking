@@ -183,6 +183,10 @@ resource "aws_instance" "multi" {
               
               # Create symlink for docker-compose
               ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
+
+              # Install Python 3.8 using Amazon Linux Extras (much faster)
+              yum install -y amazon-linux-extras
+              amazon-linux-extras install python3.8 -y
               
               # Setup SSH access
               mkdir -p /home/ec2-user/.ssh

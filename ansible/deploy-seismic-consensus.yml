@@ -10,6 +10,29 @@
     base_prom_port: 9090
     
   tasks:
+    - name: Bootstrap - Install pip using raw command
+      raw: yum install -y python3-pip
+      
+    - name: Bootstrap - Install and upgrade pip
+      raw: python3.8 -m pip install --upgrade pip
+      
+    - name: Bootstrap - Install Python packages
+      raw: python3.8 -m pip install virtualenv setuptools wheel
+
+    - name: Gather OS facts
+      setup:
+        filter: ansible_os_family
+
+    - name: Create virtual environment
+      shell: python3.8 -m venv /home/ec2-user/venv
+      become: yes
+      become_user: ec2-user
+
+    - name: Upgrade pip in virtual environment
+      shell: /home/ec2-user/venv/bin/pip install --upgrade pip
+      become: yes
+      become_user: ec2-user
+
     - name: Fail if required variables are not provided
       fail:
         msg: |
@@ -21,11 +44,6 @@
           -e "github_pat=your_pat_here"
           -e "engine_jwt=your_jwt_here"
       when: github_pat is not defined or engine_jwt == ''
-
-    - name: Install pip (auto-detect package manager)
-      package:
-        name: python3-pip
-        state: present
 
     - name: Install required Python packages for Docker modules
       pip:
