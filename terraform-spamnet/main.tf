@@ -37,13 +37,13 @@ data "aws_ami" "amazon_linux" {
 
 # Create key pair
 resource "aws_key_pair" "deployer" {
-  key_name   = "deployer-key"
+  key_name   = "deployer-key-2"
   public_key = file("~/.ssh/id_ed25519.pub")
 }
 
 # Create security group for SSH
 resource "aws_security_group" "ssh" {
-  name        = "ssh-sg"
+  name        = "ssh-sg-2"
   description = "Allow SSH access"
 
   ingress {
@@ -63,7 +63,7 @@ resource "aws_security_group" "ssh" {
 
 # Create security group for Docker applications
 resource "aws_security_group" "docker" {
-  name        = "docker-sg"
+  name        = "docker-sg-2"
   description = "Allow Docker application access"
 
   ingress {
@@ -184,6 +184,10 @@ resource "aws_instance" "multi" {
               # Create symlink for docker-compose
               ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
               
+              # Install Python 3.8 using Amazon Linux Extras (much faster)
+              yum install -y amazon-linux-extras
+              amazon-linux-extras install python3.8 -y
+
               # Setup SSH access
               mkdir -p /home/ec2-user/.ssh
               echo "$(cat ~/.ssh/id_ed25519.pub)" >> /home/ec2-user/.ssh/authorized_keys
