@@ -4,6 +4,17 @@
 
 set -e
 
+# Check for spamnet argument
+SPAMNET_MODE=false
+TERRAFORM_DIR="../terraform"
+OUTPUT_FILE="inventory.ini"
+
+if [[ "$1" == "spamnet" ]]; then
+  SPAMNET_MODE=true
+  TERRAFORM_DIR="../terraform-spamnet"
+  OUTPUT_FILE="inventory_spamnet.ini"
+fi
+
 echo "Generating Ansible inventory from Terraform output..."
 
 # Check if terraform is available
@@ -19,14 +30,14 @@ if ! command -v jq &>/dev/null; then
 fi
 
 # Check if terraform directory exists
-if [ ! -d "../terraform" ]; then
-  echo "Error: terraform directory not found. Make sure you're running this from the ansible/ directory"
+if [ ! -d "$TERRAFORM_DIR" ]; then
+  echo "Error: terraform directory not found at $TERRAFORM_DIR. Make sure you're running this from the ansible/ directory"
   exit 1
 fi
 
 # Get terraform output from terraform directory
 echo "Getting Terraform output..."
-cd ../terraform
+cd "$TERRAFORM_DIR"
 terraform output -json instances >../ansible/instances.json
 cd ../ansible
 
@@ -37,16 +48,16 @@ if [ ! -s instances.json ]; then
 fi
 
 # Generate inventory file header
-echo "Creating inventory.ini..."
-cat >inventory.ini <<'EOF'
+echo "Creating $OUTPUT_FILE..."
+cat >"$OUTPUT_FILE" <<'EOF'
 [ec2_instances]
 EOF
 
 # Parse JSON and append to inventory
-jq -r '.[] | "\(.name) ansible_host=\(.public_ip) ansible_user=ec2-user"' instances.json >>inventory.ini
+jq -r '.[] | "\(.name) ansible_host=\(.public_ip) ansible_user=ec2-user"' instances.json >>"$OUTPUT_FILE"
 
 # Add group variables
-cat >>inventory.ini <<'EOF'
+cat >>"$OUTPUT_FILE" <<'EOF'
 
 [ec2_instances:vars]
 ansible_ssh_private_key_file=~/.ssh/id_ed25519
@@ -58,12 +69,12 @@ EOF
 rm instances.json
 
 echo "Inventory file generated successfully!"
-echo "Contents of inventory.ini:"
+echo "Contents of $OUTPUT_FILE:"
 echo "=========================="
-cat inventory.ini
+cat "$OUTPUT_FILE"
 echo "=========================="
 echo ""
 echo "To use this inventory:"
-echo "1. Update the SSH key path in inventory.ini"
+echo "1. Update the SSH key path in $OUTPUT_FILE"
 echo "2. Update the JWT secret if needed"
-echo "3. Run: ansible-playbook -i inventory.ini deploy-docker.yml"
+echo "3. Run: ansible-playbook -i $OUTPUT_FILE deploy-docker.yml"
