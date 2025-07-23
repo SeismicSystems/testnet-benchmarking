@@ -1,134 +1,274 @@
 use alloy::{
-    primitives::{U256, Address},
+    consensus::{EthereumTxEnvelope, TxEip4844Variant},
+    network::EthereumWallet,
+    primitives::{U256, Address, Uint},
     providers::{Provider, ProviderBuilder},
+    signers::local::PrivateKeySigner,
 };
+use std::collections::VecDeque;
 use eyre::Result;
 use std::time::Duration;
 use tokio::task::JoinSet;
-use tokio::sync::mpsc;
 use alloy::network::TransactionBuilder;
 use tx_sender::{utils, MyProvider};
-use dashmap::DashMap;
+use std::sync::Arc;
+use clap::Parser;
 
-const MAX_CONCURRENT_TASKS: usize = 500;
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    /// Instance index for this worker
+    #[arg(long)]
+    instance_index: usize,
+    
+    /// Total number of instances
+    #[arg(long)]
+    num_instances: usize,
+    
+    /// Number of keys to use
+    #[arg(long)]
+    num_keys: usize,
+}
+
+const MAX_CONCURRENT_TASKS: usize = 300;
 const NEW_TRANSACTION_INTERVAL: Duration = Duration::from_millis(10);
+const SLEEP_DURATION: Duration = Duration::from_secs(10);
 
 
-async fn nonce_manager(providers: Vec<MyProvider>, mut rx: mpsc::Receiver<Address>, nonces: DashMap<Address, u64>) -> Result<()> {
-    while let Some(address) = rx.recv().await {
-        let provider = providers[utils::random_int(providers.len())].clone();
-        if let Ok(nonce) = provider.get_transaction_count(address).await {
-            nonces.insert(address, nonce);
-        } else {
-            println!("Failed to get nonce for address {address}");
+async fn tx_sender_worker(chain_id: u64, providers: Arc<Vec<MyProvider>>, wallet: EthereumWallet, from_address: Address, addresses: Arc<Vec<Address>>) -> Result<()> {
+    let provider = providers[utils::random_int(providers.len())].clone();
+    let mut nonce = provider.get_transaction_count(from_address).await.expect("failed to get initial nonce");
+
+    let value = U256::from(10_000_000_000_000_000u128); // 0.01 ETH in wei
+    loop {
+        let mut to_index = utils::random_int(addresses.len());
+        if from_address == addresses[to_index] {
+            to_index = (to_index + 1) % addresses.len();
         }
+        let to_address = addresses[to_index];
+        // Build a transaction to send 100 wei from Alice to Bob.
+        // The `from` field is automatically filled to the first signer's address (Alice).
+        let mut tx = alloy::rpc::types::TransactionRequest::default()
+            .to(to_address);
+        
+
+        tx.set_value(value);
+        tx.set_nonce(nonce);
+        tx.set_chain_id(chain_id);
+        tx.set_max_priority_fee_per_gas(1_000_000_000);
+        tx.set_max_fee_per_gas(20_000_000_000);
+        tx.set_gas_limit(21_000);
+
+        // Optimistically increment the nonce
+        nonce += 1;
+
+        // Build and sign the transaction using the `EthereumWallet` with the provided wallet.
+        let tx_envelope = tx.build(&wallet).await.unwrap();
+
+
+        match provider.send_tx_envelope(tx_envelope).await {
+            Ok(pending_tx) => {
+                match pending_tx.get_receipt().await {
+                    Ok(receipt) => {
+                        println!("✅ Transaction sent successfully!: {receipt:?}");
+                    }
+                    Err(e) => {
+                        println!("❌ Failed to get receipt: {e}");
+                    }
+                }
+            }
+            Err(e) => {
+                // We assume that the transaction failed because the nonce,
+                // so we send the address back to the nonce manager to update the nonce
+                println!("❌ Failed to send transaction: {e}");
+                loop {
+                    if let Ok(new_nonce) = provider.get_transaction_count(from_address).await {
+                        nonce = new_nonce;
+                        break;
+                    } else {
+                        println!("Failed to get nonce for address {from_address}");
+                        tokio::time::sleep(SLEEP_DURATION).await;
+                    }
+                }
+
+            }
+        }
+        tokio::time::sleep(NEW_TRANSACTION_INTERVAL).await;
     }
     Ok(())
 }
 
 
+async fn send_txn_batch(providers: Arc<Vec<MyProvider>>, txns: Vec<(u64, EthereumTxEnvelope<TxEip4844Variant>)>) {
+    let txns: VecDeque<(u64, EthereumTxEnvelope<TxEip4844Variant>)> = txns.into();
+    let mut futs = Vec::with_capacity(txns.len());
+    for (_n, txn) in &txns {
+        let provider = providers[utils::random_int(providers.len())].clone();
+        let fut = async move {
+            match provider.send_tx_envelope(txn.clone()).await {
+                Ok(pending_tx) => {
+                    match pending_tx.get_receipt().await {
+                        Ok(receipt) => {
+                            Ok(receipt)
+                        }
+                        Err(e) => {
+                            println!("❌ Failed to get receipt: {e}");
+                            Err(e)
+                        }
+                    }
+                }
+                Err(e) => {
+                    println!("❌ Failed to send transaction: {e}");
+                    Err(e.into())
+                }
+            }
+        };
+        futs.push(fut);
+    }
+    let _ = futures::future::try_join_all(futs).await;
+}
+
+
+async fn redistribute_wealth(
+    chain_id: u64,
+    providers: Arc<Vec<MyProvider>>,
+    wallets: Vec<EthereumWallet>,
+    addresses: Vec<Address>,
+    num_keys: usize
+) -> (Vec<EthereumWallet>, Vec<Address>) {
+    let mut new_wallets = Vec::with_capacity(num_keys);
+    let mut new_addresses = Vec::with_capacity(num_keys);
+    for _ in 0..num_keys {
+        let priv_key_signer = PrivateKeySigner::random();
+        let address = priv_key_signer.address();
+        new_addresses.push(address);
+
+        let wallet = EthereumWallet::from(priv_key_signer);
+        new_wallets.push(wallet);
+    }
+
+    let chunk_size = new_addresses.len().div_ceil(addresses.len());
+    let recv_addresses_chunks: Vec<Vec<Address>> = new_addresses.chunks(chunk_size)
+        .take(new_addresses.len())
+        .map(|chunk| chunk.to_vec())
+        .collect();
+
+    println!("Get nonces...");
+    let nonces = utils::get_nonces_concurrent(
+        &addresses,
+        providers.clone(),
+        MAX_CONCURRENT_TASKS,
+    ).await.expect("failed to get nonces");
+
+    println!("Get balances...");
+    let balances = utils::get_balances_concurrent(
+        &addresses,
+        providers.clone(),
+        MAX_CONCURRENT_TASKS,
+    ).await.expect("failed to get balances");
+
+    let one_eth = U256::from(1e18 as u128);
+    let mut txns = Vec::with_capacity(new_addresses.len());
+
+    let provider = providers[utils::random_int(providers.len())].clone();
+
+    for i in 0..recv_addresses_chunks.len() {
+        let wallet = wallets[i].clone();
+        let from_address = addresses[i];
+        let mut nonce = *nonces.get(&from_address).unwrap();
+
+        let chunk = recv_addresses_chunks[i].clone();
+
+        let balance = *balances.get(&from_address).unwrap();
+
+        for to_address in &chunk {
+            // Leave one eth for gas
+            let ubi_amount = (balance - one_eth) / Uint::from(chunk.len());
+            let ubi_amount = U256::from(10_000_000_000_000_000u128); // 0.01 ETH in wei
+            let ubi_amount = U256::from(10_000_000_000_000_000_000u128); // 10 ETH in wei
+
+            let mut tx = alloy::rpc::types::TransactionRequest::default().to(*to_address);
+            tx.set_value(ubi_amount);
+            tx.set_nonce(nonce);
+            tx.set_chain_id(chain_id);
+            tx.set_max_priority_fee_per_gas(1_000_000_000);
+            tx.set_max_fee_per_gas(20_000_000_000);
+            tx.set_gas_limit(21_000);
+
+            let tx_envelope = tx.build(&wallet).await.unwrap();
+            txns.push((nonce, tx_envelope));
+            nonce += 1;
+        }
+    }
+
+    for txn_chunk in txns.chunks(MAX_CONCURRENT_TASKS) {
+        println!("Sending batch...");
+        send_txn_batch(providers.clone(), txn_chunk.to_vec()).await;
+        println!("Sent batch");
+    }
+
+    (new_wallets, new_addresses)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = Args::parse();
+    
+    println!("Starting instance {} of {} with {} keys", 
+             args.instance_index, args.num_instances, args.num_keys);
+
     // Parse IP addresses from inventory file
-    let ips = utils::parse_inventory_ips("../ansible/inventory.ini")?;
+    let inventory_str = include_str!("../inventory.ini");
+    let ips = utils::parse_inventory_ips(inventory_str)?;
+
     let mut providers = Vec::new();
     for ip in ips {
         let rpc_url = format!("http://{ip}:8545").parse()?;
         let provider = ProviderBuilder::new().connect_http(rpc_url);
         providers.push(provider);
     }
+    let providers = Arc::new(providers);
 
-    let (priv_keys, addresses) = utils::read_keys_from_file("private_keys.txt", None)?;
-    let nonces = DashMap::new();
+    let private_keys_str = include_str!("../private_keys.txt");
+    let (priv_keys, addresses) = utils::read_keys_from_file(private_keys_str, None)?;
 
-    println!("Get initial nonces...");
-    let initial_nonces = utils::get_nonces_concurrent(addresses.clone(), providers.clone(), MAX_CONCURRENT_TASKS).await?;
-    println!("Retrieved {} nonces", initial_nonces.len());
-    for (address, nonce) in initial_nonces {
-        nonces.insert(address, nonce);
-    }
+
+    let num_key_per_instance = priv_keys.len() / args.num_instances;
+    let mut wallet_chunks: Vec<Vec<EthereumWallet>> = priv_keys.chunks(num_key_per_instance)
+        .map(|chunk| chunk.to_vec())
+        .collect();
+    let mut addresses_chunks: Vec<Vec<Address>> = addresses.chunks(num_key_per_instance)
+        .map(|chunk| chunk.to_vec())
+        .collect();
+
+    let priv_keys = wallet_chunks.swap_remove(args.instance_index);
+    let addresses = addresses_chunks.swap_remove(args.instance_index);
 
     let chain_id = providers[0].get_chain_id().await.unwrap();
+    let (priv_keys, addresses) = redistribute_wealth(chain_id, providers.clone(), priv_keys, addresses, args.num_keys).await;
 
-    let (tx_nonce, rx_nonce) = mpsc::channel(100);
-    tokio::spawn(nonce_manager(providers.clone(), rx_nonce, nonces.clone()));
+    //for add in addresses {
+    //    let provider = providers[utils::random_int(providers.len())].clone();
+    //    let balance = provider.get_balance(add).await.expect("failed to get balance");
+    //    println!("balance: {balance:?}");
+    //}
 
     let mut join_set = JoinSet::new();
-    let mut key_index = 0;
-    let mut provider_index = 0;
 
-    let mut send_interval = tokio::time::interval(NEW_TRANSACTION_INTERVAL);
+    let addresses = Arc::new(addresses);
+    for i in 0..priv_keys.len() {
+        let wallet = priv_keys[i].clone();
+        let from_address = addresses[i];
+        let addresses_clone = addresses.clone();
+        let providers_clone = providers.clone();
+        join_set.spawn(async move {
+            tx_sender_worker(chain_id, providers_clone, wallet, from_address, addresses_clone).await.expect("failed to run worker");
+        });
+    }
+
     loop {
         tokio::select! {
-            // Add new tasks
-            _ = send_interval.tick() => {
-                if join_set.len() < MAX_CONCURRENT_TASKS {
-                    let wallet = priv_keys[key_index].clone();
-                    let from_address = addresses[key_index];
-                    let provider = providers[provider_index].clone();
-
-                    let mut to_index = utils::random_int(addresses.len());
-                    if from_address == addresses[to_index] {
-                        to_index = (to_index + 1) % addresses.len();
-                    }
-                    let to_address = addresses[to_index];
-
-                    key_index = (key_index + 1) % priv_keys.len();
-                    provider_index = (provider_index + 1) % providers.len();
-
-                    let tx_nonce_clone = tx_nonce.clone();
-                    let nonces_clone = nonces.clone();
-                    join_set.spawn(async move {
-                        let value = U256::from(10_000_000_000_000_000u128); // 0.01 ETH in wei
-
-                        // Build a transaction to send 100 wei from Alice to Bob.
-                        // The `from` field is automatically filled to the first signer's address (Alice).
-                        let mut tx = alloy::rpc::types::TransactionRequest::default()
-                            .to(to_address);
-                        
-                        let nonce = *nonces_clone.get(&from_address).unwrap();
-                        // Optimistically increment the nonce
-                        nonces_clone.insert(from_address, nonce + 1);
-
-                        tx.set_value(value);
-                        tx.set_nonce(nonce);
-                        tx.set_chain_id(chain_id);
-                        tx.set_max_priority_fee_per_gas(1_000_000_000);
-                        tx.set_max_fee_per_gas(20_000_000_000);
-                        tx.set_gas_limit(21_000);
-
-                        // Build and sign the transaction using the `EthereumWallet` with the provided wallet.
-                        let tx_envelope = tx.build(&wallet).await.unwrap();
-
-                        // Send the raw transaction and retrieve the transaction receipt.
-                        // [Provider::send_tx_envelope] is a convenience method that encodes the transaction using
-                        // EIP-2718 encoding and broadcasts it to the network using [Provider::send_raw_transaction].
-
-                        //match provider.send_transaction(signed_tx).await {
-                        match provider.send_tx_envelope(tx_envelope).await {
-                            Ok(pending_tx) => {
-                                match pending_tx.get_receipt().await {
-                                    Ok(receipt) => {
-                                    println!("✅ Transaction sent successfully!: {receipt:?}");
-                                    }
-                                    Err(e) => {
-                                        println!("❌ Failed to get receipt: {e}");
-                                    }
-                                }
-                            }
-                            Err(e) => {
-                                // We assume that the transaction failed because the nonce,
-                                // so we send the address back to the nonce manager to update the nonce
-                                tokio::spawn(async move {
-                                    tx_nonce_clone.send(from_address).await.unwrap();
-                                });
-                                println!("❌ Failed to send transaction: {e}");
-                            }
-                        }
-                    });
-                }
-            }
-            
             // Await completions
             Some(_result) = join_set.join_next() => {
             }

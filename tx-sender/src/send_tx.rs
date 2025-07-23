@@ -13,18 +13,18 @@ async fn main() -> Result<()> {
     println!("🚀 Sending Ethereum transaction...");
 
     // Configuration
-    let rpc_url = "http://35.160.131.58:8545".parse()?;
+    let rpc_url = "http://35.78.199.39:8545".parse()?;
 
     // Create a signer from a private key (Hardhat's default private key)
     // WARNING: Use a test private key only! Never use a real private key in code
-    let private_key_hex = "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80";
+    let private_key_hex = "64a1d22e7537a6c974a5834988c0fe3185941f5e8e47dab139208d8825778a1a";
     let private_key_bytes = hex::decode(private_key_hex)?;
     let private_key_fixed = alloy::primitives::FixedBytes::from_slice(&private_key_bytes);
     let signer: PrivateKeySigner = PrivateKeySigner::from_bytes(&private_key_fixed)?;
     let wallet = EthereumWallet::from(signer);
 
     let from_address = wallet.default_signer().address();
-    let to_address = Address::from_str("0x70997970C51812dc3A010C7d01b50e0d17dc79C8")?;
+    let to_address = Address::from_str("0x080129a9a0b9ae8aeef78a1b6f55afc55a06ddcd")?;
 
     // Create provider
     let provider = ProviderBuilder::new().wallet(wallet).connect_http(rpc_url);
@@ -62,7 +62,10 @@ async fn main() -> Result<()> {
             loop {
                 let balance = provider.get_balance(from_address).await?;
                 if balance < balance_before {
-                    println!("✅ Transaction confirmed in {:.2?}!", confirm_start.elapsed());
+                    println!(
+                        "✅ Transaction confirmed in {:.2?}!",
+                        confirm_start.elapsed()
+                    );
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(100)).await;
@@ -110,4 +113,3 @@ async fn main() -> Result<()> {
 
     Ok(())
 }
-

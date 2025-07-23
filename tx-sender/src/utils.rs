@@ -1,22 +1,23 @@
 use alloy::{
     network::EthereumWallet,
-    primitives::Address,
+    primitives::{Address, U256},
     providers::Provider,
     signers::local::PrivateKeySigner,
 };
+use std::collections::HashMap;
 use eyre::Result;
-use std::fs;
-use rand::Rng;
 use tokio::task::JoinSet;
 use crate::MyProvider;
+use std::sync::Arc;
+use rand::Rng;
 
 
 /// Parse IP addresses from ansible inventory file
-pub fn parse_inventory_ips(inventory_path: &str) -> Result<Vec<String>> {
-    let content = fs::read_to_string(inventory_path)?;
+pub fn parse_inventory_ips(inventory: &str) -> Result<Vec<String>> {
     let mut ips = Vec::new();
+    let lines = inventory.split("\n");
     
-    for line in content.lines() {
+    for line in lines {
         let line = line.trim();
         if line.starts_with("instance-") && line.contains("ansible_host=") {
             // Extract IP address from line like: instance-0 ansible_host=35.94.11.26 ansible_user=ec2-user
@@ -38,15 +39,15 @@ pub fn random_int(n: usize) -> usize {
 }
 
 /// Read private keys and addresses from a CSV file
-pub fn read_keys_from_file(file_path: &str, limit: Option<usize>) -> Result<(Vec<EthereumWallet>, Vec<Address>)> {
-    let content = fs::read_to_string(file_path)?;
+pub fn read_keys_from_file(file_content: &str, limit: Option<usize>) -> Result<(Vec<EthereumWallet>, Vec<Address>)> {
     let mut keys = Vec::new();
     let mut addresses = Vec::new();
 
-    let bar = indicatif::ProgressBar::new(content.lines().count() as u64);
     
+    let lines = file_content.split("\n");
+
     let mut counter = 0;
-    for (line_num, line) in content.lines().enumerate() {
+    for (line_num, line) in lines.enumerate() {
         if let Some(limit) = limit {
             if counter > limit {
                 break;
@@ -90,10 +91,7 @@ pub fn read_keys_from_file(file_path: &str, limit: Option<usize>) -> Result<(Vec
         let address_bytes: [u8; 20] = address_bytes.try_into().unwrap();
         let address = Address::new(address_bytes);
         addresses.push(address);
-
-        bar.inc(1);
     }
-    bar.finish();
     
     Ok((keys, addresses))
 }
@@ -101,11 +99,11 @@ pub fn read_keys_from_file(file_path: &str, limit: Option<usize>) -> Result<(Vec
 /// Request current nonces for a list of addresses using round-robin provider selection
 /// with controlled concurrency
 pub async fn get_nonces_concurrent(
-    addresses: Vec<Address>,
-    providers: Vec<MyProvider>,
+    addresses: &[Address],
+    providers: Arc<Vec<MyProvider>>,
     max_concurrent_req: usize,
-) -> Result<Vec<(Address, u64)>> {
-    let mut results = Vec::new();
+) -> Result<HashMap<Address, u64>> {
+    let mut results = HashMap::new();
     let mut join_set = JoinSet::new();
     let mut provider_index = 0;
     let mut address_index = 0;
@@ -132,7 +130,7 @@ pub async fn get_nonces_concurrent(
         if let Some(result) = join_set.join_next().await {
             match result {
                 Ok(Ok((address, nonce))) => {
-                    results.push((address, nonce));
+                    results.insert(address, nonce);
                 }
                 Ok(Err(e)) => {
                     eprintln!("Error getting nonce: {e}");
@@ -148,10 +146,74 @@ pub async fn get_nonces_concurrent(
     while let Some(result) = join_set.join_next().await {
         match result {
             Ok(Ok((address, nonce))) => {
-                results.push((address, nonce));
+                results.insert(address, nonce);
             }
             Ok(Err(e)) => {
                 eprintln!("Error getting nonce: {e}");
+            }
+            Err(e) => {
+                eprintln!("Task join error: {e}");
+            }
+        }
+    }
+    
+    Ok(results)
+}
+
+/// Request current balances for a list of addresses using round-robin provider selection
+/// with controlled concurrency
+pub async fn get_balances_concurrent(
+    addresses: &[Address],
+    providers: Arc<Vec<MyProvider>>,
+    max_concurrent_req: usize,
+) -> Result<HashMap<Address, U256>> {
+    let mut results = HashMap::new();
+    let mut join_set = JoinSet::new();
+    let mut provider_index = 0;
+    let mut address_index = 0;
+    
+    // Process addresses in batches to control concurrency
+    while address_index < addresses.len() {
+        // Spawn up to max_concurrent_req tasks
+        while join_set.len() < max_concurrent_req && address_index < addresses.len() {
+            let address = addresses[address_index];
+            let provider = providers[provider_index].clone();
+            
+            join_set.spawn(async move {
+                match provider.get_balance(address).await {
+                    Ok(balance) => Ok((address, balance)),
+                    Err(e) => Err(eyre::eyre!("Failed to get balance for {}: {}", address, e))
+                }
+            });
+            
+            address_index += 1;
+            provider_index = (provider_index + 1) % providers.len();
+        }
+        
+        // Wait for some tasks to complete
+        if let Some(result) = join_set.join_next().await {
+            match result {
+                Ok(Ok((address, balance))) => {
+                    results.insert(address, balance);
+                }
+                Ok(Err(e)) => {
+                    eprintln!("Error getting balance: {e}");
+                }
+                Err(e) => {
+                    eprintln!("Task join error: {e}");
+                }
+            }
+        }
+    }
+    
+    // Wait for remaining tasks
+    while let Some(result) = join_set.join_next().await {
+        match result {
+            Ok(Ok((address, balance))) => {
+                results.insert(address, balance);
+            }
+            Ok(Err(e)) => {
+                eprintln!("Error getting balance: {e}");
             }
             Err(e) => {
                 eprintln!("Task join error: {e}");
