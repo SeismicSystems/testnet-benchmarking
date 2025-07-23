@@ -1,13 +1,11 @@
-variable "regions" {
-  description = "List of AWS regions to deploy to"
-  type        = list(string)
-  default     = ["us-west-2"]
+variable "region" {
+  description = "AWS region for this deployment"
+  type        = string
 }
 
 variable "instances_per_region" {
-  description = "Number of instances to create per region"
+  description = "Number of instances to create in this region"
   type        = number
-  default     = 1
 }
 
 variable "instance_type" {
