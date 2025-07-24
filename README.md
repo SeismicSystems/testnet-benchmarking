@@ -64,9 +64,9 @@ Building locally and then shipping the pre-built image will be much faster (unle
 #### Option 1: Ship the pre-built images
 Build the images (you have to only do this the first time, or when updating repos):
 ```sh
-cd ../seismic-consensus/
-docker build --build-arg GITHUB_PAT=github_pat_... -t seismic-consensus .
-docker save seismic-consensus > ../seismic-consensus.tar
+cd ../summit
+docker build --build-arg GITHUB_PAT=github_pat_... -t summit .
+docker save summit > ../summit.tar
 ```
 ```sh
 cd ../seismic-reth/
@@ -75,18 +75,18 @@ docker save seismic-reth > ../seismic-reth.tar
 ```
 
 ```sh
-cd ../seismic-consensus/
-docker build --build-arg GITHUB_PAT=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 -t seismic-consensus .
-docker save seismic-consensus > ../seismic-consensus.tar
+cd ../summit
+docker build --build-arg GITHUB_PAT=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 -t summit .
+docker save summit > ../summit.tar
 ```
 Deploy the seismic-reth image first:
 ```sh
 ansible-playbook -i inventory.ini deploy-seismic-reth.yml -e "pre_built_image_tar=../seismic-reth.tar" -e "jwt_secret=..."  -e "force_rebuild=true"
 ```
-Then deploy the seismic-consensus image (we need to provide a Github PAT, because the repo is currently private):
+Then deploy the summit image (we need to provide a Github PAT, because the repo is currently private):
 ```sh
-ansible-playbook -i inventory.ini deploy-seismic-consensus.yml \
-  -e "pre_built_image_tar=../seismic-consensus.tar" \
+ansible-playbook -i inventory.ini deploy-summit.yml \
+  -e "pre_built_image_tar=../summit.tar" \
   -e "github_pat=github_pat_..." \
   -e "engine_jwt=..." \
   -e "base_port=8080" \
@@ -100,9 +100,9 @@ For seismic-reth:
 ```sh
 ansible-playbook -i inventory.ini deploy-seismic-reth.yml -e "jwt_secret=..."  -e "force_rebuild=true"
 ```
-For seismic-consensus:
+For summit:
 ```sh
-ansible-playbook -i inventory.ini deploy-seismic-consensus.yml \
+ansible-playbook -i inventory.ini deploy-summit.yml \
   -e "github_pat=github_pat_..." \
   -e "engine_jwt=..." \
   -e "base_port=8080" \
