@@ -116,6 +116,7 @@ In `terraform-spamnet/terraform.tfvars`, you can specify the number of instances
 ```
 regions = ["us-west-2", "eu-central-1", "us-east-1", "ap-northeast-1", "sa-east-1"]
 instances_per_region = 4
+```
 
 ```
 You also have to provide the path to your ssh pubkey that will be copied to the servers:
@@ -130,7 +131,7 @@ cd terraform
 terraform init
 terraform plan
 terraform apply
-
+```
 
 Build the Docker image
 ```sh
@@ -138,9 +139,10 @@ Build the Docker image
 cd tx-sender
 docker build -t tx-sender .
 docker save tx-sender > ../tx-sender.tar
+```
 
 Deploy tx-sender:
-```
+```sh
 cp ../ansible/inventory.ini .
 cd ../ansible
 ansible-playbook -i inventory_spamnet.ini deploy-tx-sender.yml -e "num_keys=2000" -e "pre_built_image_tar=../tx-sender.tar"
