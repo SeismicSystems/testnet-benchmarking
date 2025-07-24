@@ -37,13 +37,11 @@
       fail:
         msg: |
           Required variables missing:
-          - GitHub PAT: {{ 'OK' if github_pat is defined else 'MISSING' }}
           - Engine JWT: {{ 'OK' if engine_jwt != '' else 'MISSING' }}
           
           Please provide them using:
-          -e "github_pat=your_pat_here"
           -e "engine_jwt=your_jwt_here"
-      when: github_pat is not defined or engine_jwt == ''
+      when: engine_jwt == ''
 
     - name: Install required Python packages for Docker modules
       pip:
@@ -131,8 +129,6 @@
         build:
           path: "/tmp/summit-build"
           pull: yes
-          args:
-            GITHUB_PAT: "{{ github_pat }}"
         source: build
         force_source: "{{ force_rebuild | default(false) }}"
       when: pre_built_image_tar is not defined

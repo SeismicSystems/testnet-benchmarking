@@ -65,7 +65,7 @@ Building locally and then shipping the pre-built image will be much faster (unle
 Build the images (you have to only do this the first time, or when updating repos):
 ```sh
 cd ../summit
-docker build --build-arg GITHUB_PAT=github_pat_... -t summit .
+docker build -t summit .
 docker save summit > ../summit.tar
 ```
 ```sh
@@ -76,18 +76,17 @@ docker save seismic-reth > ../seismic-reth.tar
 
 ```sh
 cd ../summit
-docker build --build-arg GITHUB_PAT=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 -t summit .
+docker build -t summit .
 docker save summit > ../summit.tar
 ```
 Deploy the seismic-reth image first:
 ```sh
 ansible-playbook -i inventory.ini deploy-seismic-reth.yml -e "pre_built_image_tar=../seismic-reth.tar" -e "jwt_secret=..."  -e "force_rebuild=true"
 ```
-Then deploy the summit image (we need to provide a Github PAT, because the repo is currently private):
+Then deploy the summit image:
 ```sh
 ansible-playbook -i inventory.ini deploy-summit.yml \
   -e "pre_built_image_tar=../summit.tar" \
-  -e "github_pat=github_pat_..." \
   -e "engine_jwt=..." \
   -e "base_port=8080" \
   -e "base_prom_port=9090" \
@@ -103,7 +102,6 @@ ansible-playbook -i inventory.ini deploy-seismic-reth.yml -e "jwt_secret=..."  -
 For summit:
 ```sh
 ansible-playbook -i inventory.ini deploy-summit.yml \
-  -e "github_pat=github_pat_..." \
   -e "engine_jwt=..." \
   -e "base_port=8080" \
   -e "base_prom_port=9090" \
