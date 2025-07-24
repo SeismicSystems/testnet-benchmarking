@@ -13,7 +13,7 @@ async fn main() -> Result<()> {
     println!("🚀 Sending Ethereum transaction...");
 
     // Configuration
-    let rpc_url = "http://35.78.199.39:8545".parse()?;
+    let rpc_url = "http://35.93.154.175:8545".parse()?;
 
     // Create a signer from a private key (Hardhat's default private key)
     // WARNING: Use a test private key only! Never use a real private key in code

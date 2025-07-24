@@ -52,5 +52,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/release/tx-sender /usr/local/bin/tx-sender
+
+# Expose metrics port
+EXPOSE 9090
+
 CMD ["tx-sender"]
 

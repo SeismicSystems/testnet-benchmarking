@@ -13,6 +13,10 @@ use alloy::network::TransactionBuilder;
 use tx_sender::{utils, MyProvider};
 use std::sync::Arc;
 use clap::Parser;
+use prometheus::{Counter, Encoder, TextEncoder, register_counter};
+use hyper::{Body, Request, Response, Server, header::HeaderValue};
+use hyper::service::{make_service_fn, service_fn};
+use std::sync::LazyLock;
 
 
 #[derive(Parser)]
@@ -29,11 +33,29 @@ struct Args {
     /// Number of keys to use
     #[arg(long)]
     num_keys: usize,
+    
+    /// Port for metrics server
+    #[arg(long, default_value = "9090")]
+    metrics_port: u16,
 }
 
-const MAX_CONCURRENT_TASKS: usize = 300;
-const NEW_TRANSACTION_INTERVAL: Duration = Duration::from_millis(10);
-const SLEEP_DURATION: Duration = Duration::from_secs(10);
+const MAX_CONCURRENT_TASKS: usize = 400;
+const NEW_TRANSACTION_INTERVAL: Duration = Duration::from_millis(20);
+const SLEEP_DURATION: Duration = Duration::from_secs(5);
+
+// Global metrics counters
+static TX_SENT: LazyLock<Counter> = LazyLock::new(|| {
+    register_counter!("transactions_sent_total", "Total transactions sent").unwrap()
+});
+static TX_SUCCESS: LazyLock<Counter> = LazyLock::new(|| {
+    register_counter!("transactions_successful_total", "Total successful transactions").unwrap()
+});
+static TX_FAILED: LazyLock<Counter> = LazyLock::new(|| {
+    register_counter!("transactions_failed_total", "Total failed transactions").unwrap()
+});
+static TX_RECEIPT_FAILED: LazyLock<Counter> = LazyLock::new(|| {
+    register_counter!("transactions_receipt_failed_total", "Total receipt failed transactions").unwrap()
+});
 
 
 async fn tx_sender_worker(chain_id: u64, providers: Arc<Vec<MyProvider>>, wallet: EthereumWallet, from_address: Address, addresses: Arc<Vec<Address>>) -> Result<()> {
@@ -41,6 +63,7 @@ async fn tx_sender_worker(chain_id: u64, providers: Arc<Vec<MyProvider>>, wallet
     let mut nonce = provider.get_transaction_count(from_address).await.expect("failed to get initial nonce");
 
     let value = U256::from(10_000_000_000_000_000u128); // 0.01 ETH in wei
+    let mut maybe_replacement = false;
     loop {
         let mut to_index = utils::random_int(addresses.len());
         if from_address == addresses[to_index] {
@@ -56,8 +79,17 @@ async fn tx_sender_worker(chain_id: u64, providers: Arc<Vec<MyProvider>>, wallet
         tx.set_value(value);
         tx.set_nonce(nonce);
         tx.set_chain_id(chain_id);
-        tx.set_max_priority_fee_per_gas(1_000_000_000);
-        tx.set_max_fee_per_gas(20_000_000_000);
+        
+        if maybe_replacement {
+            // Use higher gas fees for replacement transactions
+            tx.set_max_priority_fee_per_gas(3_000_000_000); // 3 gwei
+            tx.set_max_fee_per_gas(50_000_000_000);         // 50 gwei
+            println!("🔄 Sending replacement tx with higher gas fees");
+        } else {
+            // Normal gas fees
+            tx.set_max_priority_fee_per_gas(1_000_000_000); // 1 gwei
+            tx.set_max_fee_per_gas(20_000_000_000);         // 20 gwei
+        }
         tx.set_gas_limit(21_000);
 
         // Optimistically increment the nonce
@@ -69,22 +101,29 @@ async fn tx_sender_worker(chain_id: u64, providers: Arc<Vec<MyProvider>>, wallet
 
         match provider.send_tx_envelope(tx_envelope).await {
             Ok(pending_tx) => {
+                TX_SENT.inc();
+                maybe_replacement = false; // Reset flag after successful send
                 match pending_tx.get_receipt().await {
                     Ok(receipt) => {
+                        TX_SUCCESS.inc();
                         println!("✅ Transaction sent successfully!: {receipt:?}");
                     }
                     Err(e) => {
+                        TX_RECEIPT_FAILED.inc();
                         println!("❌ Failed to get receipt: {e}");
                     }
                 }
             }
             Err(e) => {
+                TX_FAILED.inc();
                 // We assume that the transaction failed because the nonce,
                 // so we send the address back to the nonce manager to update the nonce
                 println!("❌ Failed to send transaction: {e}");
                 loop {
                     if let Ok(new_nonce) = provider.get_transaction_count(from_address).await {
                         nonce = new_nonce;
+                        maybe_replacement = true;
+                        // The next transaction might be a replacement
                         break;
                     } else {
                         println!("Failed to get nonce for address {from_address}");
@@ -185,8 +224,8 @@ async fn redistribute_wealth(
         for to_address in &chunk {
             // Leave one eth for gas
             let ubi_amount = (balance - one_eth) / Uint::from(chunk.len());
-            let ubi_amount = U256::from(10_000_000_000_000_000u128); // 0.01 ETH in wei
-            let ubi_amount = U256::from(10_000_000_000_000_000_000u128); // 10 ETH in wei
+            //let ubi_amount = U256::from(10_000_000_000_000_000u128); // 0.01 ETH in wei
+            //let ubi_amount = U256::from(10_000_000_000_000_000_000u128); // 10 ETH in wei
 
             let mut tx = alloy::rpc::types::TransactionRequest::default().to(*to_address);
             tx.set_value(ubi_amount);
@@ -211,12 +250,62 @@ async fn redistribute_wealth(
     (new_wallets, new_addresses)
 }
 
+async fn start_prometheus_server(port: u16) -> Result<()> {
+    let make_svc = make_service_fn(move |_| {
+        async move {
+            Ok::<_, hyper::Error>(service_fn(move |req: Request<Body>| {
+                async move {
+                    let path = req.uri().path();
+                    if path == "/metrics" || path == "/" {
+                        let encoder = TextEncoder::new();
+                        let metric_families = prometheus::gather();
+                        let mut buffer = Vec::new();
+                        encoder.encode(&metric_families, &mut buffer).unwrap();
+                        
+                        let mut response = Response::new(Body::from(buffer));
+                        response.headers_mut().insert(
+                            hyper::header::CONTENT_TYPE,
+                            HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8")
+                        );
+                        Ok::<hyper::Response<hyper::Body>, hyper::Error>(response)
+                    } else {
+                        let mut response = Response::new(Body::from("Metrics available at /metrics"));
+                        *response.status_mut() = hyper::StatusCode::NOT_FOUND;
+                        Ok::<hyper::Response<hyper::Body>, hyper::Error>(response)
+                    }
+                }
+            }))
+        }
+    });
+
+    let addr = ([0, 0, 0, 0], port).into();
+    println!("Starting metrics server on http://0.0.0.0:{}", port);
+    
+    Server::bind(&addr)
+        .serve(make_svc)
+        .await?;
+        
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
     
     println!("Starting instance {} of {} with {} keys", 
              args.instance_index, args.num_instances, args.num_keys);
+
+    // Start metrics server
+    tokio::spawn(async move {
+        if let Err(e) = start_prometheus_server(args.metrics_port).await {
+            eprintln!("Metrics server failed: {}", e);
+        }
+    });
+    
+    //loop {
+    //    TX_SUCCESS.inc();
+    //    tokio::time::sleep(Duration::from_millis(1000)).await;
+    //}
 
     // Parse IP addresses from inventory file
     let inventory_str = include_str!("../inventory.ini");
@@ -253,7 +342,8 @@ async fn main() -> Result<()> {
     //    let balance = provider.get_balance(add).await.expect("failed to get balance");
     //    println!("balance: {balance:?}");
     //}
-
+    
+    
     let mut join_set = JoinSet::new();
 
     let addresses = Arc::new(addresses);
