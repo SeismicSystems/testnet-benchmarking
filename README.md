@@ -146,7 +146,6 @@ cd ../ansible
 ansible-playbook -i inventory_spamnet.ini deploy-tx-sender.yml -e "num_keys=2000" -e "pre_built_image_tar=../tx-sender.tar"
 (If you didn't built the Docker image, drop the `pre_built_image_tar` flag)
 ```
-```
 
 ### 6. Prometheus
 Generate the Prometheus config from the terraform output:
