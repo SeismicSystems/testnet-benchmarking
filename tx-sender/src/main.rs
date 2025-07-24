@@ -299,7 +299,6 @@ async fn main() -> Result<()> {
         }
     });
 
-
     // Parse IP addresses from inventory file
     let inventory_str = include_str!("../inventory.ini");
     let ips = utils::parse_inventory_ips(inventory_str)?;
