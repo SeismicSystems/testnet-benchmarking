@@ -1,5 +1,12 @@
 pub mod utils;
-use alloy::{
-    providers::{RootProvider, Identity, fillers::{JoinFill, FillProvider, GasFiller, BlobGasFiller, NonceFiller, ChainIdFiller}},
+use alloy::providers::{
+    fillers::{BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller},
+    Identity, RootProvider,
 };
-pub type MyProvider = FillProvider<JoinFill<Identity, JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>>, RootProvider>;
+pub type MyProvider = FillProvider<
+    JoinFill<
+        Identity,
+        JoinFill<GasFiller, JoinFill<BlobGasFiller, JoinFill<NonceFiller, ChainIdFiller>>>,
+    >,
+    RootProvider,
+>;

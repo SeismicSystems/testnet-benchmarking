@@ -1,23 +1,22 @@
+use alloy::network::TransactionBuilder;
 use alloy::{
     consensus::{EthereumTxEnvelope, TxEip4844Variant},
     network::EthereumWallet,
-    primitives::{U256, Address, Uint},
+    primitives::{Address, Uint, U256},
     providers::{Provider, ProviderBuilder},
     signers::local::PrivateKeySigner,
 };
-use std::collections::VecDeque;
+use clap::Parser;
 use eyre::Result;
+use hyper::service::{make_service_fn, service_fn};
+use hyper::{header::HeaderValue, Body, Request, Response, Server};
+use prometheus::{register_counter, Counter, Encoder, TextEncoder};
+use std::collections::VecDeque;
+use std::sync::Arc;
+use std::sync::LazyLock;
 use std::time::Duration;
 use tokio::task::JoinSet;
-use alloy::network::TransactionBuilder;
 use tx_sender::{utils, MyProvider};
-use std::sync::Arc;
-use clap::Parser;
-use prometheus::{Counter, Encoder, TextEncoder, register_counter};
-use hyper::{Body, Request, Response, Server, header::HeaderValue};
-use hyper::service::{make_service_fn, service_fn};
-use std::sync::LazyLock;
-
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -25,15 +24,15 @@ struct Args {
     /// Instance index for this worker
     #[arg(long)]
     instance_index: usize,
-    
+
     /// Total number of instances
     #[arg(long)]
     num_instances: usize,
-    
+
     /// Number of keys to use
     #[arg(long)]
     num_keys: usize,
-    
+
     /// Port for metrics server
     #[arg(long, default_value = "9090")]
     metrics_port: u16,
@@ -48,19 +47,35 @@ static TX_SENT: LazyLock<Counter> = LazyLock::new(|| {
     register_counter!("transactions_sent_total", "Total transactions sent").unwrap()
 });
 static TX_SUCCESS: LazyLock<Counter> = LazyLock::new(|| {
-    register_counter!("transactions_successful_total", "Total successful transactions").unwrap()
+    register_counter!(
+        "transactions_successful_total",
+        "Total successful transactions"
+    )
+    .unwrap()
 });
 static TX_FAILED: LazyLock<Counter> = LazyLock::new(|| {
     register_counter!("transactions_failed_total", "Total failed transactions").unwrap()
 });
 static TX_RECEIPT_FAILED: LazyLock<Counter> = LazyLock::new(|| {
-    register_counter!("transactions_receipt_failed_total", "Total receipt failed transactions").unwrap()
+    register_counter!(
+        "transactions_receipt_failed_total",
+        "Total receipt failed transactions"
+    )
+    .unwrap()
 });
 
-
-async fn tx_sender_worker(chain_id: u64, providers: Arc<Vec<MyProvider>>, wallet: EthereumWallet, from_address: Address, addresses: Arc<Vec<Address>>) -> Result<()> {
+async fn tx_sender_worker(
+    chain_id: u64,
+    providers: Arc<Vec<MyProvider>>,
+    wallet: EthereumWallet,
+    from_address: Address,
+    addresses: Arc<Vec<Address>>,
+) -> Result<()> {
     let provider = providers[utils::random_int(providers.len())].clone();
-    let mut nonce = provider.get_transaction_count(from_address).await.expect("failed to get initial nonce");
+    let mut nonce = provider
+        .get_transaction_count(from_address)
+        .await
+        .expect("failed to get initial nonce");
 
     let value = U256::from(10_000_000_000_000_000u128); // 0.01 ETH in wei
     let mut maybe_replacement = false;
@@ -72,23 +87,21 @@ async fn tx_sender_worker(chain_id: u64, providers: Arc<Vec<MyProvider>>, wallet
         let to_address = addresses[to_index];
         // Build a transaction to send 100 wei from Alice to Bob.
         // The `from` field is automatically filled to the first signer's address (Alice).
-        let mut tx = alloy::rpc::types::TransactionRequest::default()
-            .to(to_address);
-        
+        let mut tx = alloy::rpc::types::TransactionRequest::default().to(to_address);
 
         tx.set_value(value);
         tx.set_nonce(nonce);
         tx.set_chain_id(chain_id);
-        
+
         if maybe_replacement {
             // Use higher gas fees for replacement transactions
             tx.set_max_priority_fee_per_gas(3_000_000_000); // 3 gwei
-            tx.set_max_fee_per_gas(50_000_000_000);         // 50 gwei
+            tx.set_max_fee_per_gas(50_000_000_000); // 50 gwei
             println!("🔄 Sending replacement tx with higher gas fees");
         } else {
             // Normal gas fees
             tx.set_max_priority_fee_per_gas(1_000_000_000); // 1 gwei
-            tx.set_max_fee_per_gas(20_000_000_000);         // 20 gwei
+            tx.set_max_fee_per_gas(20_000_000_000); // 20 gwei
         }
         tx.set_gas_limit(21_000);
 
@@ -97,7 +110,6 @@ async fn tx_sender_worker(chain_id: u64, providers: Arc<Vec<MyProvider>>, wallet
 
         // Build and sign the transaction using the `EthereumWallet` with the provided wallet.
         let tx_envelope = tx.build(&wallet).await.unwrap();
-
 
         match provider.send_tx_envelope(tx_envelope).await {
             Ok(pending_tx) => {
@@ -130,33 +142,29 @@ async fn tx_sender_worker(chain_id: u64, providers: Arc<Vec<MyProvider>>, wallet
                         tokio::time::sleep(SLEEP_DURATION).await;
                     }
                 }
-
             }
         }
         tokio::time::sleep(NEW_TRANSACTION_INTERVAL).await;
     }
-    Ok(())
 }
 
-
-async fn send_txn_batch(providers: Arc<Vec<MyProvider>>, txns: Vec<(u64, EthereumTxEnvelope<TxEip4844Variant>)>) {
+async fn send_txn_batch(
+    providers: Arc<Vec<MyProvider>>,
+    txns: Vec<(u64, EthereumTxEnvelope<TxEip4844Variant>)>,
+) {
     let txns: VecDeque<(u64, EthereumTxEnvelope<TxEip4844Variant>)> = txns.into();
     let mut futs = Vec::with_capacity(txns.len());
     for (_n, txn) in &txns {
         let provider = providers[utils::random_int(providers.len())].clone();
         let fut = async move {
             match provider.send_tx_envelope(txn.clone()).await {
-                Ok(pending_tx) => {
-                    match pending_tx.get_receipt().await {
-                        Ok(receipt) => {
-                            Ok(receipt)
-                        }
-                        Err(e) => {
-                            println!("❌ Failed to get receipt: {e}");
-                            Err(e)
-                        }
+                Ok(pending_tx) => match pending_tx.get_receipt().await {
+                    Ok(receipt) => Ok(receipt),
+                    Err(e) => {
+                        println!("❌ Failed to get receipt: {e}");
+                        Err(e)
                     }
-                }
+                },
                 Err(e) => {
                     println!("❌ Failed to send transaction: {e}");
                     Err(e.into())
@@ -168,13 +176,12 @@ async fn send_txn_batch(providers: Arc<Vec<MyProvider>>, txns: Vec<(u64, Ethereu
     let _ = futures::future::try_join_all(futs).await;
 }
 
-
 async fn redistribute_wealth(
     chain_id: u64,
     providers: Arc<Vec<MyProvider>>,
     wallets: Vec<EthereumWallet>,
     addresses: Vec<Address>,
-    num_keys: usize
+    num_keys: usize,
 ) -> (Vec<EthereumWallet>, Vec<Address>) {
     let mut new_wallets = Vec::with_capacity(num_keys);
     let mut new_addresses = Vec::with_capacity(num_keys);
@@ -188,29 +195,25 @@ async fn redistribute_wealth(
     }
 
     let chunk_size = new_addresses.len().div_ceil(addresses.len());
-    let recv_addresses_chunks: Vec<Vec<Address>> = new_addresses.chunks(chunk_size)
+    let recv_addresses_chunks: Vec<Vec<Address>> = new_addresses
+        .chunks(chunk_size)
         .take(new_addresses.len())
         .map(|chunk| chunk.to_vec())
         .collect();
 
     println!("Get nonces...");
-    let nonces = utils::get_nonces_concurrent(
-        &addresses,
-        providers.clone(),
-        MAX_CONCURRENT_TASKS,
-    ).await.expect("failed to get nonces");
+    let nonces = utils::get_nonces_concurrent(&addresses, providers.clone(), MAX_CONCURRENT_TASKS)
+        .await
+        .expect("failed to get nonces");
 
     println!("Get balances...");
-    let balances = utils::get_balances_concurrent(
-        &addresses,
-        providers.clone(),
-        MAX_CONCURRENT_TASKS,
-    ).await.expect("failed to get balances");
+    let balances =
+        utils::get_balances_concurrent(&addresses, providers.clone(), MAX_CONCURRENT_TASKS)
+            .await
+            .expect("failed to get balances");
 
     let one_eth = U256::from(1e18 as u128);
     let mut txns = Vec::with_capacity(new_addresses.len());
-
-    let provider = providers[utils::random_int(providers.len())].clone();
 
     for i in 0..recv_addresses_chunks.len() {
         let wallet = wallets[i].clone();
@@ -224,8 +227,6 @@ async fn redistribute_wealth(
         for to_address in &chunk {
             // Leave one eth for gas
             let ubi_amount = (balance - one_eth) / Uint::from(chunk.len());
-            //let ubi_amount = U256::from(10_000_000_000_000_000u128); // 0.01 ETH in wei
-            //let ubi_amount = U256::from(10_000_000_000_000_000_000u128); // 10 ETH in wei
 
             let mut tx = alloy::rpc::types::TransactionRequest::default().to(*to_address);
             tx.set_value(ubi_amount);
@@ -241,7 +242,7 @@ async fn redistribute_wealth(
         }
     }
 
-    for txn_chunk in txns.chunks(MAX_CONCURRENT_TASKS) {
+    for txn_chunk in txns.chunks(100) {
         println!("Sending batch...");
         send_txn_batch(providers.clone(), txn_chunk.to_vec()).await;
         println!("Sent batch");
@@ -251,61 +252,53 @@ async fn redistribute_wealth(
 }
 
 async fn start_prometheus_server(port: u16) -> Result<()> {
-    let make_svc = make_service_fn(move |_| {
-        async move {
-            Ok::<_, hyper::Error>(service_fn(move |req: Request<Body>| {
-                async move {
-                    let path = req.uri().path();
-                    if path == "/metrics" || path == "/" {
-                        let encoder = TextEncoder::new();
-                        let metric_families = prometheus::gather();
-                        let mut buffer = Vec::new();
-                        encoder.encode(&metric_families, &mut buffer).unwrap();
-                        
-                        let mut response = Response::new(Body::from(buffer));
-                        response.headers_mut().insert(
-                            hyper::header::CONTENT_TYPE,
-                            HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8")
-                        );
-                        Ok::<hyper::Response<hyper::Body>, hyper::Error>(response)
-                    } else {
-                        let mut response = Response::new(Body::from("Metrics available at /metrics"));
-                        *response.status_mut() = hyper::StatusCode::NOT_FOUND;
-                        Ok::<hyper::Response<hyper::Body>, hyper::Error>(response)
-                    }
-                }
-            }))
-        }
+    let make_svc = make_service_fn(move |_| async move {
+        Ok::<_, hyper::Error>(service_fn(move |req: Request<Body>| async move {
+            let path = req.uri().path();
+            if path == "/metrics" || path == "/" {
+                let encoder = TextEncoder::new();
+                let metric_families = prometheus::gather();
+                let mut buffer = Vec::new();
+                encoder.encode(&metric_families, &mut buffer).unwrap();
+
+                let mut response = Response::new(Body::from(buffer));
+                response.headers_mut().insert(
+                    hyper::header::CONTENT_TYPE,
+                    HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
+                );
+                Ok::<hyper::Response<hyper::Body>, hyper::Error>(response)
+            } else {
+                let mut response = Response::new(Body::from("Metrics available at /metrics"));
+                *response.status_mut() = hyper::StatusCode::NOT_FOUND;
+                Ok::<hyper::Response<hyper::Body>, hyper::Error>(response)
+            }
+        }))
     });
 
     let addr = ([0, 0, 0, 0], port).into();
-    println!("Starting metrics server on http://0.0.0.0:{}", port);
-    
-    Server::bind(&addr)
-        .serve(make_svc)
-        .await?;
-        
+    println!("Starting metrics server on http://0.0.0.0:{port}");
+
+    Server::bind(&addr).serve(make_svc).await?;
+
     Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    
-    println!("Starting instance {} of {} with {} keys", 
-             args.instance_index, args.num_instances, args.num_keys);
+
+    println!(
+        "Starting instance {} of {} with {} keys",
+        args.instance_index, args.num_instances, args.num_keys
+    );
 
     // Start metrics server
     tokio::spawn(async move {
         if let Err(e) = start_prometheus_server(args.metrics_port).await {
-            eprintln!("Metrics server failed: {}", e);
+            eprintln!("Metrics server failed: {e}");
         }
     });
-    
-    //loop {
-    //    TX_SUCCESS.inc();
-    //    tokio::time::sleep(Duration::from_millis(1000)).await;
-    //}
+
 
     // Parse IP addresses from inventory file
     let inventory_str = include_str!("../inventory.ini");
@@ -322,12 +315,13 @@ async fn main() -> Result<()> {
     let private_keys_str = include_str!("../private_keys.txt");
     let (priv_keys, addresses) = utils::read_keys_from_file(private_keys_str, None)?;
 
-
     let num_key_per_instance = priv_keys.len() / args.num_instances;
-    let mut wallet_chunks: Vec<Vec<EthereumWallet>> = priv_keys.chunks(num_key_per_instance)
+    let mut wallet_chunks: Vec<Vec<EthereumWallet>> = priv_keys
+        .chunks(num_key_per_instance)
         .map(|chunk| chunk.to_vec())
         .collect();
-    let mut addresses_chunks: Vec<Vec<Address>> = addresses.chunks(num_key_per_instance)
+    let mut addresses_chunks: Vec<Vec<Address>> = addresses
+        .chunks(num_key_per_instance)
         .map(|chunk| chunk.to_vec())
         .collect();
 
@@ -335,17 +329,16 @@ async fn main() -> Result<()> {
     let addresses = addresses_chunks.swap_remove(args.instance_index);
 
     let chain_id = providers[0].get_chain_id().await.unwrap();
-    let (priv_keys, addresses) = redistribute_wealth(chain_id, providers.clone(), priv_keys, addresses, args.num_keys).await;
+    let (priv_keys, addresses) = redistribute_wealth(
+        chain_id,
+        providers.clone(),
+        priv_keys,
+        addresses,
+        args.num_keys,
+    )
+    .await;
 
-    //for add in addresses {
-    //    let provider = providers[utils::random_int(providers.len())].clone();
-    //    let balance = provider.get_balance(add).await.expect("failed to get balance");
-    //    println!("balance: {balance:?}");
-    //}
-    
-    
     let mut join_set = JoinSet::new();
-
     let addresses = Arc::new(addresses);
     for i in 0..priv_keys.len() {
         let wallet = priv_keys[i].clone();
@@ -353,7 +346,15 @@ async fn main() -> Result<()> {
         let addresses_clone = addresses.clone();
         let providers_clone = providers.clone();
         join_set.spawn(async move {
-            tx_sender_worker(chain_id, providers_clone, wallet, from_address, addresses_clone).await.expect("failed to run worker");
+            tx_sender_worker(
+                chain_id,
+                providers_clone,
+                wallet,
+                from_address,
+                addresses_clone,
+            )
+            .await
+            .expect("failed to run worker");
         });
     }
 
@@ -362,11 +363,11 @@ async fn main() -> Result<()> {
             // Await completions
             Some(_result) = join_set.join_next() => {
             }
-            
+
             // Exit condition
             else => break, // JoinSet is empty and we're done spawning
         }
     }
 
     Ok(())
-} 
+}
