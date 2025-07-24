@@ -35,8 +35,8 @@ You also have to provide the path to your ssh pubkey that will be copied to the 
 
 ```
 ssh_public_key_path = "~/.ssh/id_ed25519.pub"
-
 ```
+
 Finally, run the terraform commands:
 ```sh
 cd terraform
