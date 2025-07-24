@@ -5,11 +5,9 @@ WORKDIR /app
 
 FROM chef AS planner
 # Accept PAT as build argument (not stored in final image)
-ARG GITHUB_PAT
-RUN test -n "$GITHUB_PAT" || (echo "GITHUB_PAT build argument is required" && exit 1)
 
 # Clone the repository using PAT
-RUN git clone https://${GITHUB_PAT}@github.com/SeismicSystems/summit.git .
+RUN git clone https://github.com/SeismicSystems/summit.git .
 
 # Checkout specific branch if needed
 RUN git checkout devnet
