@@ -133,9 +133,9 @@ terraform plan
 terraform apply
 ```
 
-Build the Docker image
-```sh
+Build the Docker image:
 (You can skip these steps if you want to build Docker image on the instances)
+```sh
 cd tx-sender
 docker build -t tx-sender .
 docker save tx-sender > ../tx-sender.tar
@@ -146,8 +146,8 @@ Deploy tx-sender:
 cp ../ansible/inventory.ini .
 cd ../ansible
 ansible-playbook -i inventory_spamnet.ini deploy-tx-sender.yml -e "num_keys=2000" -e "pre_built_image_tar=../tx-sender.tar"
-(If you didn't built the Docker image, drop the `pre_built_image_tar` flag)
 ```
+If you didn't built the Docker image, drop the `pre_built_image_tar` flag
 
 ### 6. Prometheus
 Generate the Prometheus config from the terraform output:
