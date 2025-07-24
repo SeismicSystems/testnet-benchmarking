@@ -27,15 +27,15 @@ aws_session_token = ...
 ### 3. Deploy EC2 instances
 In `terraform/terraform.tfvars`, you can specify the number of instances, and the different regions:
 ```
-regions = ["us-west-2", "eu-central-1", "us-east-1"]
-instances_per_region = 2 
+regions = ["us-west-2", "eu-central-1", "us-east-1", "ap-northeast-1", "sa-east-1"]
+instances_per_region = 4
+
 ```
-In `terraform/main.tf`, provide the path to your ssh pubkey that should be copied to the servers:
+You also have to provide the path to your ssh pubkey that will be copied to the servers:
+
 ```
-resource "aws_key_pair" "deployer" {
-  key_name   = "deployer-key"
-  public_key = file("~/.ssh/id.pub")
-}
+ssh_public_key_path = "~/.ssh/id_ed25519.pub"
+
 ```
 Finally, run the terraform commands:
 ```sh
@@ -112,9 +112,40 @@ ansible-playbook -i inventory.ini deploy-seismic-consensus.yml \
 ```
 
 ### 5. Spam transactions
+In `terraform-spamnet/terraform.tfvars`, you can specify the number of instances, and the different regions:
+```
+regions = ["us-west-2", "eu-central-1", "us-east-1", "ap-northeast-1", "sa-east-1"]
+instances_per_region = 4
+
+```
+You also have to provide the path to your ssh pubkey that will be copied to the servers:
+
+```
+ssh_public_key_path = "~/.ssh/id_ed25519.pub"
+
+```
+Finally, run the terraform commands:
 ```sh
+cd terraform
+terraform init
+terraform plan
+terraform apply
+
+
+Build the Docker image
+```sh
+(You can skip these steps if you want to build Docker image on the instances)
 cd tx-sender
-cargo run --bin tx-sender
+docker build -t tx-sender .
+docker save tx-sender > ../tx-sender.tar
+
+Deploy tx-sender:
+```
+cp ../ansible/inventory.ini .
+cd ../ansible
+ansible-playbook -i inventory_spamnet.ini deploy-tx-sender.yml -e "num_keys=2000" -e "pre_built_image_tar=../tx-sender.tar"
+(If you didn't built the Docker image, drop the `pre_built_image_tar` flag)
+```
 ```
 
 ### 6. Prometheus
@@ -137,8 +168,3 @@ sudo systemctl start grafana-server
 ```
 Open Grafana dashboard at http://localhost:3000/ and select Prometheus as a data source.
 
-### 8. Pull logs from the instances
-```sh
-cd ansible
-ansible-playbook -i inventory.ini get-logs.yml
-```
