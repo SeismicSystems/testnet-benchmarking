@@ -242,7 +242,7 @@ async fn redistribute_wealth(
         }
     }
 
-    for txn_chunk in txns.chunks(100) {
+    for txn_chunk in txns.chunks(200) {
         println!("Sending batch...");
         send_txn_batch(providers.clone(), txn_chunk.to_vec()).await;
         println!("Sent batch");

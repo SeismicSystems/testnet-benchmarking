@@ -9,7 +9,7 @@ ARG GITHUB_PAT
 RUN test -n "$GITHUB_PAT" || (echo "GITHUB_PAT build argument is required" && exit 1)
 
 # Clone the repository using PAT
-RUN git clone https://${GITHUB_PAT}@github.com/SeismicSystems/seismic-simplex.git .
+RUN git clone https://${GITHUB_PAT}@github.com/SeismicSystems/summit.git .
 
 # Checkout specific branch if needed
 RUN git checkout devnet

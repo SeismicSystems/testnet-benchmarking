@@ -47,6 +47,21 @@
         state: started
         enabled: yes
 
+
+    - name: Increase connection tracking limits for high-throughput consensus
+      sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+      loop:
+        - { name: 'net.netfilter.nf_conntrack_max', value: '262144' }
+        - { name: 'net.netfilter.nf_conntrack_buckets', value: '65536' }
+        - { name: 'net.netfilter.nf_conntrack_tcp_timeout_established', value: '600' }
+        - { name: 'net.netfilter.nf_conntrack_tcp_timeout_time_wait', value: '30' }
+        - { name: 'net.netfilter.nf_conntrack_tcp_timeout_fin_wait', value: '30' }
+
+
     # Pre-built image path (if provided)
     - name: Check if pre-built image tar exists locally
       local_action:

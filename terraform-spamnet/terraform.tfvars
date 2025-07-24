@@ -1,6 +1,6 @@
 # Regions configuration with Tokyo for Asia coverage
 regions = ["us-west-2", "eu-central-1", "us-east-1", "ap-northeast-1", "sa-east-1"]
-instances_per_region = 2
+instances_per_region = 4
 
 # Optional: Override defaults
 instance_type = "m5.xlarge"

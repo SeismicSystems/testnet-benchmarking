@@ -3,8 +3,8 @@
   hosts: ec2_instances
   become: yes
   vars:
-    docker_image: "seismic-consensus"
-    container_name: "consensus-node"
+    docker_image: "summit"
+    container_name: "summit"
     engine_jwt: "{{ vault_engine_jwt | default('') }}"
     base_port: 8080
     base_prom_port: 9090
@@ -71,7 +71,7 @@
     - name: Copy pre-built Docker image tar to instances
       copy:
         src: "{{ pre_built_image_tar }}"
-        dest: "/tmp/consensus.tar"
+        dest: "/tmp/summit.tar"
       when: 
         - pre_built_image_tar is defined
         - tar_file_check.stat.exists
@@ -79,21 +79,49 @@
     - name: Load pre-built Docker image from tar
       docker_image:
         name: "{{ docker_image }}"
-        load_path: "/tmp/consensus.tar"
+        load_path: "/tmp/summit.tar"
         source: load
       when: pre_built_image_tar is defined
 
+
+    - name: Remove old image to force using newly loaded one
+      docker_image:
+        name: "{{ docker_image }}"
+        state: absent
+        force_absent: yes
+      when: pre_built_image_tar is defined
+      ignore_errors: yes
+
+    - name: Force reload pre-built Docker image
+      docker_image:
+        name: "{{ docker_image }}"
+        load_path: "/tmp/summit.tar"
+        source: load
+        force_source: yes
+      when: pre_built_image_tar is defined
+
+    - name: Verify loaded image has prom-port
+      shell: docker run --entrypoint ./seismicbft-node {{ docker_image }} --help | grep -i prom || echo "NO PROM FOUND"
+      register: loaded_image_check
+      when: pre_built_image_tar is defined
+
+    - name: Show loaded image prom check
+      debug:
+        msg: "Loaded image prom check: {{ loaded_image_check.stdout }}"
+      when: pre_built_image_tar is defined
+
+
     - name: Create build directory (if building from source)
       file:
-        path: /tmp/consensus-build
+        path: /tmp/summit-build
         state: directory
         mode: '0755'
       when: pre_built_image_tar is not defined
 
     - name: Copy Dockerfile to EC2 instance
       copy:
-        src: "../seismic-consensus/Dockerfile"
-        dest: "/tmp/consensus-build/Dockerfile"
+        src: "../summit/Dockerfile"
+        dest: "/tmp/summit-build/Dockerfile"
         mode: '0644'
       when: pre_built_image_tar is not defined
 
@@ -101,7 +129,7 @@
       docker_image:
         name: "{{ docker_image }}"
         build:
-          path: "/tmp/consensus-build"
+          path: "/tmp/summit-build"
           pull: yes
           args:
             GITHUB_PAT: "{{ github_pat }}"
@@ -121,6 +149,7 @@
       docker_container:
         name: "temp-keygen-{{ ansible_hostname }}"
         image: "{{ docker_image }}"
+        entrypoint: ["./seismicbft-node"]  # Override the entrypoint
         command: ["--key-path", "/app/keys/consensus.key", "keys", "generate"]
         state: started
         detach: no
@@ -160,8 +189,8 @@
   hosts: ec2_instances[0]
   become: yes
   vars:
-    docker_image: "seismic-consensus"
-    container_name: "consensus-node"
+    docker_image: "summit"
+    container_name: "summit"
     engine_jwt: "{{ vault_engine_jwt | default('') }}"
     base_port: 8080
     base_prom_port: 9090
@@ -201,8 +230,8 @@
   hosts: ec2_instances
   become: yes
   vars:
-    docker_image: "seismic-consensus"
-    container_name: "consensus-node"
+    docker_image: "summit"
+    container_name: "summit"
     engine_jwt: "{{ vault_engine_jwt | default('') }}"
     base_port: 8080
     base_prom_port: 9090
@@ -225,7 +254,7 @@
         state: absent
       ignore_errors: yes
 
-    - name: Clear seismic-reth state (if requested)
+    - name: Clear summit state (if requested)
       file:
         path: "{{ item }}"
         state: absent
@@ -245,11 +274,13 @@
       docker_container:
         name: "{{ container_name }}"
         image: "{{ docker_image }}"
-        command: ["--engine-jwt", "{{ engine_jwt }}", "--port", "{{ instance_port }}", "--prom-port", "{{ instance_prom_port }}", "--key-path", "/app/keys/consensus.key", "run"]
+        command: ["--port", "{{ instance_port }}", "--key-path", "/app/keys/consensus.key"]
         state: started
         restart_policy: no
         detach: yes
         network_mode: host
+        env:
+          JWT_SECRET: "{{ engine_jwt }}"  # This is what the startup script expects
         ports:
           - "{{ instance_port }}:{{ instance_port }}"
           - "{{ instance_prom_port }}:{{ instance_prom_port }}"
