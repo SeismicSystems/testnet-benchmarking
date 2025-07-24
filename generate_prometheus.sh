@@ -3,24 +3,35 @@
 # Generate prometheus.yml from ansible inventory
 # This script reads IP addresses from inventory.ini and creates a prometheus configuration
 
-set -e  # Exit on any error
+set -e # Exit on any error
 
 echo "🔧 Generating prometheus.yml from inventory..."
 
-# Check if inventory file exists
+# Check if inventory files exist
 if [ ! -f "ansible/inventory.ini" ]; then
-    echo "❌ Error: ansible/inventory.ini not found"
-    exit 1
+  echo "❌ Error: ansible/inventory.ini not found"
+  exit 1
 fi
 
-# Extract IP addresses from inventory file
-echo "📥 Reading IP addresses from inventory..."
-ips=$(grep "ansible_host=" ansible/inventory.ini | sed 's/.*ansible_host=\([^[:space:]]*\).*/\1/')
+if [ ! -f "ansible/inventory_spamnet.ini" ]; then
+  echo "❌ Error: ansible/inventory_spamnet.ini not found"
+  exit 1
+fi
+
+# Extract IP addresses from both inventory files
+echo "📥 Reading IP addresses from inventory.ini..."
+ips_regular=$(grep "ansible_host=" ansible/inventory.ini | sed 's/.*ansible_host=\([^[:space:]]*\).*/\1/')
+
+echo "📥 Reading IP addresses from inventory_spamnet.ini..."
+ips_spamnet=$(grep "ansible_host=" ansible/inventory_spamnet.ini | sed 's/.*ansible_host=\([^[:space:]]*\).*/\1/')
+
+# Combine both sets of IPs
+ips="$ips_regular $ips_spamnet"
 
 # Create prometheus.yml
 echo "📝 Creating prometheus.yml..."
 
-cat > prometheus.yml << 'EOF'
+cat >prometheus.yml <<'EOF'
 # my global config
 global:
   scrape_interval: 15s # Set the scrape interval to every 15 seconds. Default is every 1 minute.
@@ -40,22 +51,37 @@ rule_files:
   # - "second_rules.yml"
 
 # A scrape configuration containing exactly one endpoint to scrape:
-# Here it's Prometheus itself.
 scrape_configs:
-  # The job name is added as a label `job=<job_name>` to any timeseries scraped from this config.
-  - job_name: "prometheus"
-
-    # metrics_path defaults to '/metrics'
-    # scheme defaults to 'http'.
-
+  - job_name: "network"
     static_configs:
       - targets:
 EOF
 
-# Add each IP address with port 9090
-for ip in $ips; do
-    echo "          - \"$ip:9090\"" >> prometheus.yml
+# Add regular cluster IPs
+for ip in $ips_regular; do
+  echo "          - \"$ip:9090\"" >>prometheus.yml
 done
+
+cat >>prometheus.yml <<'EOF'
+        labels:
+          cluster: "regular"
+          
+  - job_name: "tx-sender"
+    honor_labels: true
+    scrape_protocols: ["PrometheusText0.0.4"]
+    static_configs:
+      - targets:
+EOF
+
+# Add spamnet cluster IPs
+for ip in $ips_spamnet; do
+  echo "          - \"$ip:9090\"" >>prometheus.yml
+done
+
+cat >>prometheus.yml <<'EOF'
+        labels:
+          cluster: "spamnet"
+EOF
 
 echo "✅ Successfully generated prometheus.yml"
 echo "📊 Added $(echo "$ips" | wc -w) targets to prometheus configuration"
@@ -64,4 +90,5 @@ echo "📊 Added $(echo "$ips" | wc -w) targets to prometheus configuration"
 echo "📋 Generated prometheus.yml:"
 echo "----------------------------------------"
 cat prometheus.yml
-echo "----------------------------------------" 
+echo "----------------------------------------"
+

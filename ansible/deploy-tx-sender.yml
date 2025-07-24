@@ -48,6 +48,24 @@
         state: started
         enabled: yes
 
+    - name: Set ulimits for high connection load
+      blockinfile:
+        path: /etc/security/limits.conf
+        block: |
+          * soft nofile 10000
+          * hard nofile 10000
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - TX SENDER ULIMITS"
+
+    - name: Set system-wide ulimits
+      lineinfile:
+        path: /etc/systemd/system.conf
+        regexp: '^#?DefaultLimitNOFILE='
+        line: 'DefaultLimitNOFILE=10000'
+
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+
     # Pre-built image path (if provided)
     - name: Check if pre-built image tar exists locally
       local_action:

@@ -11,3 +11,5 @@ data/
 prometheus.yml
 target/
 ansible/*.ini
+tx-sender/*.ini
+ansible/*.json

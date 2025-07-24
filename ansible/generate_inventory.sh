@@ -62,6 +62,7 @@ cat >>"$OUTPUT_FILE" <<'EOF'
 [ec2_instances:vars]
 ansible_ssh_private_key_file=~/.ssh/id_ed25519
 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+ansible_python_interpreter=/usr/bin/python3.8
 jwt_secret=f79ae8046bc11c9927afe911db7143c51a806c4a537cc08e0d37140b0192f430
 EOF
 
