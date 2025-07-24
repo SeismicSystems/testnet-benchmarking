@@ -116,13 +116,12 @@ regions = ["us-west-2", "eu-central-1", "us-east-1", "ap-northeast-1", "sa-east-
 instances_per_region = 4
 ```
 
-```
 You also have to provide the path to your ssh pubkey that will be copied to the servers:
 
 ```
 ssh_public_key_path = "~/.ssh/id_ed25519.pub"
-
 ```
+
 Finally, run the terraform commands:
 ```sh
 cd terraform
