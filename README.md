@@ -53,7 +53,7 @@ Provide your ssh pubkey and the jwt secret in `ansible/generate_inventory.sh`:
 ansible_ssh_private_key_file=~/.ssh/id_ed25519
 jwt_secret=...
 ```
-Generate the `inventory.ini` and `inventory_spamnet.ini` files:
+Generate the `inventory.ini`:
 ```sh
 cd ansible
 chmod +x generate_inventory.sh
@@ -131,14 +131,19 @@ Build the Docker image:
 (You can skip these steps if you want to build Docker image on the instances)
 ```sh
 cd tx-sender
+cp ../ansible/inventory.ini .
 docker build -t tx-sender .
 docker save tx-sender > ../tx-sender.tar
 ```
 
+Generate the `inventory_spamnet.ini`:
+```sh
+cd ../ansible
+./generate_inventory.sh
+```
+
 Deploy tx-sender:
 ```sh
-cp ../ansible/inventory.ini .
-cd ../ansible
 ansible-playbook -i inventory_spamnet.ini deploy-tx-sender.yml -e "num_keys=2000" -e "pre_built_image_tar=../tx-sender.tar"
 ```
 If you didn't built the Docker image, drop the `pre_built_image_tar` flag
