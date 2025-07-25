@@ -74,11 +74,6 @@ docker build -t seismic-reth .
 docker save seismic-reth > ../seismic-reth.tar
 ```
 
-```sh
-cd ../summit
-docker build -t summit .
-docker save summit > ../summit.tar
-```
 Deploy the seismic-reth image first:
 ```sh
 ansible-playbook -i inventory.ini deploy-seismic-reth.yml -e "pre_built_image_tar=../seismic-reth.tar" -e "jwt_secret=..."  -e "force_rebuild=true"
