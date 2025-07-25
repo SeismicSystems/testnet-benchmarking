@@ -47,15 +47,17 @@ terraform apply
 
 ### 4. Deploy the Docker containers
 After deploying the EC2 instances, we use the terraform output to create the ansible inventory file.
+Provide your ssh pubkey and the jwt secret in `ansible/generate_inventory.sh`:
+```
+[ec2_instances:vars]
+ansible_ssh_private_key_file=~/.ssh/id_ed25519
+jwt_secret=...
+```
+Generate the `inventory.ini` and `inventory_spamnet.ini` files:
 ```sh
 cd ansible
 chmod +x generate_inventory.sh
 ./generate_inventory.sh
-```
-Provide your ssh pubkey and the jwt secret in `ansible/inventory.ini`:
-```
-ansible_ssh_private_key_file=~/.ssh/id.pub
-jwt_secret=...
 ```
 
 There are two options. You can either build the Docker image on each instance, or build the image locally, and then ship the pre-built image to the EC2 instances.
