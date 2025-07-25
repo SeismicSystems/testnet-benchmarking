@@ -121,7 +121,7 @@ ssh_public_key_path = "~/.ssh/id_ed25519.pub"
 
 Finally, run the terraform commands:
 ```sh
-cd terraform
+cd terraform-spamnet
 terraform init
 terraform plan
 terraform apply
