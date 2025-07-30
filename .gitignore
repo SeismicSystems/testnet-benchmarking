@@ -10,3 +10,6 @@ target/
 ansible/*.ini
 tx-sender/*.ini
 ansible/*.json
+ansible/example_genesis.toml
+ansible/genesis.toml
+ansible/testnet/

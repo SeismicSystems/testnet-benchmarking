@@ -10,7 +10,8 @@ FROM chef AS planner
 RUN git clone https://github.com/SeismicSystems/summit.git .
 
 # Checkout specific branch if needed
-RUN git checkout devnet
+#RUN git checkout devnet
+RUN git checkout d/threshold-simplex
 
 # Generate recipe file
 RUN cargo chef prepare --recipe-path recipe.json
@@ -43,7 +44,7 @@ RUN apt-get update && apt-get -y upgrade && apt-get install -y \
 WORKDIR /app
 
 # Copy the binary from builder stage
-COPY --from=builder /app/target/release/seismicbft-node /app/seismicbft-node
+COPY --from=builder /app/target/release/summit /app/summit
 
 # Environment variables for the consensus arguments
 ENV ENGINE_JWT=""
@@ -61,8 +62,8 @@ ENV JWT_FILE="./jwt.hex"
 RUN echo '#!/bin/bash\n\
 # Create JWT secret file from environment variable\n\
 echo "$JWT_SECRET" > "$JWT_FILE"\n\
-# Run seismic-reth with the JWT secret\n\
-exec ./seismicbft-node --engine-jwt-path "$JWT_FILE" --prom-port "$PROM_PORT" "$@" run' > /app/start.sh && \
+# Run summit with the JWT secret\n\
+exec ./summit --engine-jwt-path "$JWT_FILE" --prom-port "$PROM_PORT" --share-path ./share.pem --key-path ./key.pem --store-path ./store "$@" run' > /app/start.sh && \
 chmod +x /app/start.sh
 
 

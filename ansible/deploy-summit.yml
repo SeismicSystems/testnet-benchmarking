@@ -59,11 +59,11 @@
 
     # Handle pre-built image or build from source
     - name: Check if pre-built image tar exists locally
-      local_action:
-        module: stat
+      stat:
         path: "{{ pre_built_image_tar }}"
       register: tar_file_check
       when: pre_built_image_tar is defined
+      delegate_to: localhost
       become: no
 
     - name: Copy pre-built Docker image tar to instances
@@ -134,106 +134,118 @@
       when: pre_built_image_tar is not defined
       # no_log: true  # Temporarily disabled to see error
 
-    # Generate keys on each instance and save to persistent storage
+    # Keys will be generated locally and copied to instances
     - name: Create key storage directory
       file:
         path: /opt/consensus/keys
         state: directory
         mode: '0755'
 
-    - name: Generate key and save to file
-      docker_container:
-        name: "temp-keygen-{{ ansible_hostname }}"
-        image: "{{ docker_image }}"
-        entrypoint: ["./seismicbft-node"]  # Override the entrypoint
-        command: ["--key-path", "/app/keys/consensus.key", "keys", "generate"]
-        state: started
-        detach: no
-        auto_remove: no
-        volumes:
-          - "/opt/consensus/keys:/app/keys"
-      register: key_generation
-
-    - name: Get container logs to see what went wrong
-      command: docker logs temp-keygen-{{ ansible_hostname }}
-      register: container_logs
-      when: key_generation.container.State.ExitCode != 0
-
-    - name: Show container logs for debugging
-      debug:
-        msg: "{{ container_logs.stdout_lines }}"
-      when: key_generation.container.State.ExitCode != 0
-
-    - name: Force stop temporary container
-      docker_container:
-        name: "temp-keygen-{{ ansible_hostname }}"
-        state: stopped
-      ignore_errors: yes
-
-    - name: Remove temporary container
-      docker_container:
-        name: "temp-keygen-{{ ansible_hostname }}"
-        state: absent
-        force_kill: yes
-      ignore_errors: yes
-      
-    - name: Clean up any dangling containers with seismicbft-node entrypoint
-      shell: docker ps -a --filter "ancestor={{ docker_image }}" --format "{{ '{{.Names}}' }}" | grep -v "^{{ container_name }}$" | xargs -r docker rm -f
-      ignore_errors: yes
-
-    - name: Extract public key from generation output
+    - name: Set node info (keys will be provided externally)
       set_fact:
-        node_key: "{{ key_generation.container.Output | regex_search('Public Key: (.+)', '\\1') | first }}"
         node_port: "{{ base_port }}"
         node_ip: "{{ ansible_host }}"
-        #node_ip: "{{ ansible_default_ipv4.address }}"
 
-    - name: Display generated key info
-      debug:
-        msg: "Node {{ inventory_hostname }}: Key={{ node_key }}, IP={{ node_ip }}, Port={{ node_port }}"
-
-- name: Create committee file and deploy
-  hosts: ec2_instances[0]
-  become: yes
+- name: Generate keys and create genesis file locally
+  hosts: localhost
+  gather_facts: no
   vars:
-    docker_image: "summit"
-    container_name: "summit"
-    engine_jwt: "{{ vault_engine_jwt | default('') }}"
     base_port: 8080
-    base_prom_port: 9090
     
   tasks:
     - name: Gather all node information
       set_fact:
         all_nodes: "{{ groups['ec2_instances'] | map('extract', hostvars) | list }}"
-
-    - name: Create committee.toml content
-      set_fact:
-        committee_content: |
-          validators = [
-          {% for node in all_nodes %}
-              # {{ node.inventory_hostname }}
-              ["{{ node.node_key }}", "{{ node.node_ip }}:{{ node.node_port }}"],
-          {% endfor %}
-          ]
-
-    - name: Create test_committee.toml file
+        
+    - name: Clean up existing testnet directory
+      file:
+        path: "{{ playbook_dir }}/testnet"
+        state: absent
+      delegate_to: localhost
+        
+    - name: Create initial genesis.toml template
       copy:
-        content: "{{ committee_content }}"
-        dest: "/tmp/test_committee.toml"
+        content: |
+          eth_genesis_hash = "0x683713729fcb72be6f3d8b88c8cda3e10569d73b9640d3bf6f5184d94bd97616"
+          leader_timeout_ms = 2000
+          notarization_timeout_ms = 4000
+          nullify_timeout_ms = 4000
+          activity_timeout_views = 256
+          skip_timeout_views = 32
+          max_message_size_bytes = 104857600
+          namespace = "_SEISMIC_BFT"
+          identity = "b5c71ffedf9af700a95b200587265710e76337c9bcbfba8c1830683351b4c8982f507a59ddc821de53eb8b848993d1e38eba8abf3e7b18acebe921fdf23ac6d7a0d6c32010ceb149083d9fb5f5dc284a64eff22b59381bf5a58685e91a73aef28969e5b152f4ef6a6d9979f110fc43ad126e7a745fbab1a7f2a8d434e868c8de5d031a6af2d24f398e7c57fb79e4ae00"
+          {% for node in all_nodes %}
+
+          [[validators]]
+          public_key = "PLACEHOLDER_KEY_{{ loop.index0 }}"
+          ip_address = "{{ node.node_ip }}:{{ node.node_port }}"
+          {% endfor %}
+        dest: "{{ playbook_dir }}/genesis.toml"
         mode: '0644'
+      delegate_to: localhost
 
-    - name: Display test_committee.toml content
+    - name: Create example_genesis.toml from genesis.toml for DKG binary
+      copy:
+        src: "{{ playbook_dir }}/genesis.toml"
+        dest: "{{ playbook_dir }}/example_genesis.toml"
+        remote_src: no
+      delegate_to: localhost
+      
+    - name: Check if DKG binary exists
+      stat:
+        path: "{{ playbook_dir }}/dkg_testnet"
+      register: dkg_binary
+
+    - name: Execute DKG binary to generate keys and populate genesis.toml
+      command: ./dkg_testnet --nodes {{ all_nodes | length }}
+      args:
+        chdir: "{{ playbook_dir }}"
+      register: dkg_output
+      when: dkg_binary.stat.exists
+      
+    - name: Display DKG output
       debug:
-        msg: "{{ committee_content }}"
+        msg: "{{ dkg_output.stdout_lines }}"
+      when: dkg_binary.stat.exists
 
-    - name: Fetch test_committee.toml to local machine
-      fetch:
-        src: "/tmp/test_committee.toml"
-        dest: "./test_committee.toml"
-        flat: yes
+    - name: Fail if DKG binary not found
+      fail:
+        msg: "DKG binary not found at {{ playbook_dir }}/dkg_testnet"
+      when: not dkg_binary.stat.exists
 
-- name: Deploy consensus containers with committee file
+    - name: Verify genesis file was updated
+      stat:
+        path: "{{ playbook_dir }}/example_genesis.toml"
+      register: genesis_stat
+      delegate_to: localhost
+
+    - name: Check if genesis still has placeholders
+      lineinfile:
+        path: "{{ playbook_dir }}/example_genesis.toml"
+        line: 'public_key = "PLACEHOLDER_KEY_0"'
+        state: absent
+      check_mode: yes
+      register: placeholder_check
+      delegate_to: localhost
+
+    - name: Fail if genesis still has placeholders
+      fail:
+        msg: "Genesis file still contains placeholder keys. DKG binary may have failed."
+      when: placeholder_check.changed
+      delegate_to: localhost
+
+    - name: Display generated genesis.toml content
+      slurp:
+        src: "{{ playbook_dir }}/genesis.toml"
+      register: genesis_file
+      delegate_to: localhost
+      
+    - name: Show genesis.toml content
+      debug:
+        msg: "{{ genesis_file.content | b64decode }}"
+
+- name: Deploy consensus containers with genesis file
   hosts: ec2_instances
   become: yes
   vars:
@@ -244,10 +256,54 @@
     base_prom_port: 9090
     
   tasks:
-    - name: Copy test_committee.toml to all instances
+    - name: Create consensus directory on host
+      file:
+        path: /root/.seismic/consensus
+        state: directory
+        mode: '0755'
+        
+    - name: Copy generated key files to instances
       copy:
-        src: "./test_committee.toml"
-        dest: "/tmp/test_committee.toml"
+        src: "{{ playbook_dir }}/testnet/node{{ ansible_play_hosts.index(inventory_hostname) }}/{{ item }}"
+        dest: "/root/.seismic/consensus/{{ item }}"
+        mode: '0600'
+      loop:
+        - key.pem
+        - share.pem
+
+    - name: Stop any existing containers first
+      docker_container:
+        name: "{{ container_name }}"
+        state: absent
+      ignore_errors: yes
+
+    - name: Force remove directories from /tmp with verification
+      shell: |
+        rm -rf /tmp/{{ item }}
+        if [ -e "/tmp/{{ item }}" ]; then
+          echo "Failed to remove /tmp/{{ item }}"
+          ls -la /tmp/{{ item }}
+          exit 1
+        fi
+      loop:
+        - example_genesis.toml
+        - key.pem
+        - share.pem
+
+    - name: Copy key files to /tmp for Docker mounting
+      copy:
+        src: "{{ playbook_dir }}/testnet/node{{ ansible_play_hosts.index(inventory_hostname) }}/{{ item }}"
+        dest: "/tmp/{{ item }}"
+        mode: '0644'
+        force: yes
+      loop:
+        - key.pem
+        - share.pem
+
+    - name: Copy genesis.toml to all instances
+      copy:
+        src: "{{ playbook_dir }}/example_genesis.toml"
+        dest: "/tmp/example_genesis.toml"
         mode: '0644'
 
     - name: Set ports for this instance
@@ -272,33 +328,37 @@
         state: absent
       loop:
         - "/root/.seismic/consensus"
-      when: clear_state | default(false)
+      when: clear_state | default(false) | bool
+      register: dir_check
 
     - name: Display removal confirmation
       debug:
-        msg: "Directory {{ item.item }} exists: {{ item.stat.exists }}"
+        msg: "Directory {{ item.item }} removal: {{ 'successful' if item.changed else 'no change needed' }}"
       loop: "{{ dir_check.results }}"
       when: 
-        - clear_state | default(false)
+        - clear_state | default(false) | bool
         - dir_check is defined
 
     - name: Run consensus Docker container
       docker_container:
         name: "{{ container_name }}"
         image: "{{ docker_image }}"
-        command: ["--port", "{{ instance_port }}", "--key-path", "/app/keys/consensus.key"]
+        command: ["--port", "{{ instance_port }}"]
         state: started
         restart_policy: no
         detach: yes
         network_mode: host
+        working_dir: /app
         env:
           JWT_SECRET: "{{ engine_jwt }}"  # This is what the startup script expects
         ports:
           - "{{ instance_port }}:{{ instance_port }}"
           - "{{ instance_prom_port }}:{{ instance_prom_port }}"
         volumes:
-          - "/tmp/test_committee.toml:/app/test_committee.toml:ro"
-          - "/opt/consensus/keys:/app/keys:ro"
+          - "/tmp/example_genesis.toml:/app/example_genesis.toml:ro"
+          - "/tmp/key.pem:/app/key.pem:ro"
+          - "/tmp/share.pem:/app/share.pem:ro"
+          - "/root/.seismic:/root/.seismic:ro"
         log_driver: json-file
         log_options:
           max-size: "50m"
