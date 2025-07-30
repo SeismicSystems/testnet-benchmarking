@@ -164,10 +164,21 @@
         msg: "{{ container_logs.stdout_lines }}"
       when: key_generation.container.State.ExitCode != 0
 
+    - name: Force stop temporary container
+      docker_container:
+        name: "temp-keygen-{{ ansible_hostname }}"
+        state: stopped
+      ignore_errors: yes
+
     - name: Remove temporary container
       docker_container:
         name: "temp-keygen-{{ ansible_hostname }}"
         state: absent
+        force_kill: yes
+      ignore_errors: yes
+      
+    - name: Clean up any dangling containers with seismicbft-node entrypoint
+      shell: docker ps -a --filter "ancestor={{ docker_image }}" --format "{{ '{{.Names}}' }}" | grep -v "^{{ container_name }}$" | xargs -r docker rm -f
       ignore_errors: yes
 
     - name: Extract public key from generation output
@@ -248,6 +259,11 @@
       docker_container:
         name: "{{ container_name }}"
         state: absent
+        force_kill: yes
+      ignore_errors: yes
+      
+    - name: Clean up any remaining containers using this image
+      shell: docker ps -a --filter "ancestor={{ docker_image }}" --format "{{ '{{.Names}}' }}" | xargs -r docker rm -f
       ignore_errors: yes
 
     - name: Clear summit state (if requested)

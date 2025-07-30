@@ -118,7 +118,7 @@ async fn tx_sender_worker(
                 match pending_tx.get_receipt().await {
                     Ok(receipt) => {
                         TX_SUCCESS.inc();
-                        println!("✅ Transaction sent successfully!: {receipt:?}");
+                        //println!("✅ Transaction sent successfully!: {receipt:?}");
                     }
                     Err(e) => {
                         TX_RECEIPT_FAILED.inc();

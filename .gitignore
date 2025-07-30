@@ -1,10 +1,7 @@
 .terraform/
 *.backup
 *.tfstate
-seismic-reth.tar
-seismic-consensus.tar
-seismic-simplex.tar
-tx-sender.tar
+*.tar
 test_committee.toml
 docker_logs/
 data/
