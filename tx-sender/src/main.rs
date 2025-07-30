@@ -34,7 +34,7 @@ struct Args {
     num_keys: usize,
 
     /// Port for metrics server
-    #[arg(long, default_value = "9090")]
+    #[arg(long, default_value = "9092")]
     metrics_port: u16,
 }
 
@@ -343,8 +343,9 @@ async fn main() -> Result<()> {
     });
 
     // Parse IP addresses from inventory file
-    let inventory_str = include_str!("../inventory.ini");
-    let ips = utils::parse_inventory_ips(inventory_str)?;
+    //let inventory_str = include_str!("../inventory.ini");
+    //let ips = utils::parse_inventory_ips(inventory_str)?;
+    let ips = vec!["127.0.0.1".to_string()];
 
     let mut providers = Vec::new();
     for ip in ips {
