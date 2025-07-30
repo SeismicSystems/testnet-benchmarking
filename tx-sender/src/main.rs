@@ -41,6 +41,9 @@ struct Args {
 const MAX_CONCURRENT_TASKS: usize = 400;
 const NEW_TRANSACTION_INTERVAL: Duration = Duration::from_millis(20);
 const SLEEP_DURATION: Duration = Duration::from_secs(5);
+const TIMEOUT_DURATION: Duration = Duration::from_secs(5);
+const MAX_RETRY_ATTEMPTS: u32 = 5;
+const MAX_GAS_MULTIPLIER: f64 = 10.0;
 
 // Global metrics counters
 static TX_SENT: LazyLock<Counter> = LazyLock::new(|| {
@@ -78,13 +81,26 @@ async fn tx_sender_worker(
         .expect("failed to get initial nonce");
 
     let value = U256::from(10_000_000_000_000_000u128); // 0.01 ETH in wei
-    let mut maybe_replacement = false;
+    let mut retry_count = 0u32;
+    let mut consecutive_failures = 0u32;
+    let base_max_fee = 20_000_000_000u64; // 20 gwei
+    let base_priority_fee = 1_000_000_000u64; // 1 gwei
+    let mut current_to_address: Option<Address> = None;
+    
     loop {
-        let mut to_index = utils::random_int(addresses.len());
-        if from_address == addresses[to_index] {
-            to_index = (to_index + 1) % addresses.len();
-        }
-        let to_address = addresses[to_index];
+        // Select recipient address only for new transactions (not retries)
+        let to_address = if retry_count == 0 {
+            let mut to_index = utils::random_int(addresses.len());
+            if from_address == addresses[to_index] {
+                to_index = (to_index + 1) % addresses.len();
+            }
+            let addr = addresses[to_index];
+            current_to_address = Some(addr);
+            addr
+        } else {
+            // For retries, use the same address as previous attempt
+            current_to_address.unwrap()
+        };
         // Build a transaction to send 100 wei from Alice to Bob.
         // The `from` field is automatically filled to the first signer's address (Alice).
         let mut tx = alloy::rpc::types::TransactionRequest::default().to(to_address);
@@ -93,15 +109,22 @@ async fn tx_sender_worker(
         tx.set_nonce(nonce);
         tx.set_chain_id(chain_id);
 
-        if maybe_replacement {
-            // Use higher gas fees for replacement transactions
-            tx.set_max_priority_fee_per_gas(3_000_000_000); // 3 gwei
-            tx.set_max_fee_per_gas(50_000_000_000); // 50 gwei
-            println!("🔄 Sending replacement tx with higher gas fees");
+        // Calculate gas fees based on retry count
+        let gas_multiplier = if retry_count == 0 {
+            1.0
         } else {
-            // Normal gas fees
-            tx.set_max_priority_fee_per_gas(1_000_000_000); // 1 gwei
-            tx.set_max_fee_per_gas(20_000_000_000); // 20 gwei
+            (1.5_f64.powi(retry_count as i32)).min(MAX_GAS_MULTIPLIER)
+        };
+        
+        let max_fee = (base_max_fee as f64 * gas_multiplier) as u64;
+        let priority_fee = (base_priority_fee as f64 * gas_multiplier) as u64;
+        
+        tx.set_max_priority_fee_per_gas(priority_fee.into());
+        tx.set_max_fee_per_gas(max_fee.into());
+        
+        if retry_count > 0 {
+            println!("🔄 Retry attempt {}/{} with {}x gas fees (max: {} gwei, priority: {} gwei)", 
+                retry_count, MAX_RETRY_ATTEMPTS, gas_multiplier, max_fee / 1_000_000_000, priority_fee / 1_000_000_000);
         }
         tx.set_gas_limit(21_000);
 
@@ -114,9 +137,10 @@ async fn tx_sender_worker(
         match provider.send_tx_envelope(tx_envelope).await {
             Ok(pending_tx) => {
                 TX_SENT.inc();
-                maybe_replacement = false; // Reset flag after successful send
+                retry_count = 0; // Reset retry count after successful send
+                consecutive_failures = 0; // Reset consecutive failures
                 match pending_tx.get_receipt().await {
-                    Ok(receipt) => {
+                    Ok(_receipt) => {
                         TX_SUCCESS.inc();
                         //println!("✅ Transaction sent successfully!: {receipt:?}");
                     }
@@ -128,19 +152,38 @@ async fn tx_sender_worker(
             }
             Err(e) => {
                 TX_FAILED.inc();
-                // We assume that the transaction failed because the nonce,
-                // so we send the address back to the nonce manager to update the nonce
-                println!("❌ Failed to send transaction: {e}");
-                loop {
-                    if let Ok(new_nonce) = provider.get_transaction_count(from_address).await {
-                        nonce = new_nonce;
-                        maybe_replacement = true;
-                        // The next transaction might be a replacement
-                        break;
-                    } else {
-                        println!("Failed to get nonce for address {from_address}");
-                        tokio::time::sleep(SLEEP_DURATION).await;
+                retry_count += 1;
+                consecutive_failures += 1;
+                
+                println!("❌ Failed to send transaction (attempt {retry_count}/{MAX_RETRY_ATTEMPTS}): {e}");
+                
+                // Circuit breaker: pause if too many consecutive failures
+                if consecutive_failures >= 10 {
+                    println!("🚨 Circuit breaker: too many consecutive failures, pausing for 30 seconds");
+                    tokio::time::sleep(TIMEOUT_DURATION).await;
+                    consecutive_failures = 0;
+                }
+                
+                // Check if we've exceeded max retries
+                if retry_count >= MAX_RETRY_ATTEMPTS {
+                    println!("⚠️ Max retry attempts reached, moving to next transaction");
+                    retry_count = 0;
+                    
+                    // Get fresh nonce and continue with next transaction
+                    loop {
+                        if let Ok(new_nonce) = provider.get_transaction_count(from_address).await {
+                            nonce = new_nonce;
+                            break;
+                        } else {
+                            println!("Failed to get nonce for address {from_address}");
+                            tokio::time::sleep(SLEEP_DURATION).await;
+                        }
                     }
+                } else {
+                    // Retry with same nonce but higher gas (handled by gas calculation above)
+                    nonce -= 1; // Revert the optimistic increment to retry same nonce
+                    tokio::time::sleep(Duration::from_millis(1000 * retry_count as u64)).await; // Exponential backoff
+                    continue;
                 }
             }
         }
