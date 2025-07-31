@@ -68,11 +68,11 @@
 
     # Pre-built image path (if provided)
     - name: Check if pre-built image tar exists locally
-      local_action:
-        module: stat
+      stat:
         path: "{{ pre_built_image_tar }}"
       register: tar_file_check
       when: pre_built_image_tar is defined
+      delegate_to: localhost
       become: no
 
     - name: Fail if pre-built image tar doesn't exist
