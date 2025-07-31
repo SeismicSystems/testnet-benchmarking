@@ -76,4 +76,4 @@ chmod +x /app/start.sh
 
 # Set the startup script as the entrypoint
 ENTRYPOINT ["/app/start.sh"]
-CMD ["--http", "--http.addr", "0.0.0.0", "--ws", "--ws.addr", "0.0.0.0", "--authrpc.addr", "0.0.0.0"]
+CMD ["--http", "--http.addr", "0.0.0.0", "--ws", "--ws.addr", "0.0.0.0", "--authrpc.addr", "0.0.0.0", "--rpc.max-connections", "2000", "--txpool.pending-max-count", "20000", "--txpool.pending-max-size", "80"]
