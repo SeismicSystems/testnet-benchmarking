@@ -10,7 +10,7 @@ use clap::Parser;
 use eyre::Result;
 use hyper::service::{make_service_fn, service_fn};
 use hyper::{header::HeaderValue, Body, Request, Response, Server};
-use prometheus::{register_counter, Counter, Encoder, TextEncoder};
+use prometheus::{register_counter, register_gauge, Counter, Gauge, Encoder, TextEncoder};
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::LazyLock;
@@ -38,7 +38,7 @@ struct Args {
     metrics_port: u16,
 }
 
-const MAX_CONCURRENT_TASKS: usize = 400;
+const MAX_CONCURRENT_TASKS: usize = 300;
 const NEW_TRANSACTION_INTERVAL: Duration = Duration::from_millis(20);
 const SLEEP_DURATION: Duration = Duration::from_secs(5);
 const TIMEOUT_DURATION: Duration = Duration::from_secs(5);
@@ -66,6 +66,9 @@ static TX_RECEIPT_FAILED: LazyLock<Counter> = LazyLock::new(|| {
     )
     .unwrap()
 });
+static ACTIVE_WORKERS: LazyLock<Gauge> = LazyLock::new(|| {
+    register_gauge!("active_workers", "Number of active tx sender workers").unwrap()
+});
 
 async fn tx_sender_worker(
     chain_id: u64,
@@ -86,6 +89,9 @@ async fn tx_sender_worker(
     let base_max_fee = 20_000_000_000u64; // 20 gwei
     let base_priority_fee = 1_000_000_000u64; // 1 gwei
     let mut current_to_address: Option<Address> = None;
+    let mut num_resets = 0;
+
+    ACTIVE_WORKERS.inc();
     
     loop {
         // Select recipient address only for new transactions (not retries)
@@ -139,10 +145,11 @@ async fn tx_sender_worker(
                 TX_SENT.inc();
                 retry_count = 0; // Reset retry count after successful send
                 consecutive_failures = 0; // Reset consecutive failures
+                num_resets = 0;
                 match pending_tx.get_receipt().await {
-                    Ok(_receipt) => {
+                    Ok(receipt) => {
                         TX_SUCCESS.inc();
-                        //println!("✅ Transaction sent successfully!: {receipt:?}");
+                        println!("✅ Transaction sent successfully!: {receipt:?}");
                     }
                     Err(e) => {
                         TX_RECEIPT_FAILED.inc();
@@ -162,6 +169,12 @@ async fn tx_sender_worker(
                     println!("🚨 Circuit breaker: too many consecutive failures, pausing for 30 seconds");
                     tokio::time::sleep(TIMEOUT_DURATION).await;
                     consecutive_failures = 0;
+                    num_resets += 1;
+
+                    if num_resets >= 10 {
+                        ACTIVE_WORKERS.dec();
+                        break Ok(());
+                    }
                 }
                 
                 // Check if we've exceeded max retries
@@ -346,6 +359,7 @@ async fn main() -> Result<()> {
     //let inventory_str = include_str!("../inventory.ini");
     //let ips = utils::parse_inventory_ips(inventory_str)?;
     let ips = vec!["127.0.0.1".to_string()];
+    //let ips = vec!["54.68.53.2".to_string()];
 
     let mut providers = Vec::new();
     for ip in ips {
@@ -357,6 +371,7 @@ async fn main() -> Result<()> {
 
     let private_keys_str = include_str!("../private_keys.txt");
     let (priv_keys, addresses) = utils::read_keys_from_file(private_keys_str, None)?;
+
 
     let num_key_per_instance = priv_keys.len() / args.num_instances;
     let mut wallet_chunks: Vec<Vec<EthereumWallet>> = priv_keys
@@ -381,9 +396,12 @@ async fn main() -> Result<()> {
     )
     .await;
 
+
     let mut join_set = JoinSet::new();
     let addresses = Arc::new(addresses);
-    for i in 0..priv_keys.len() {
+
+    let mut i = 0;
+    while i < MAX_CONCURRENT_TASKS && i < priv_keys.len() {
         let wallet = priv_keys[i].clone();
         let from_address = addresses[i];
         let addresses_clone = addresses.clone();
@@ -399,12 +417,31 @@ async fn main() -> Result<()> {
             .await
             .expect("failed to run worker");
         });
+        i += 1;
     }
 
     loop {
         tokio::select! {
             // Await completions
             Some(_result) = join_set.join_next() => {
+                if join_set.len() < MAX_CONCURRENT_TASKS && i < priv_keys.len() {
+                    let wallet = priv_keys[i].clone();
+                    let from_address = addresses[i];
+                    let addresses_clone = addresses.clone();
+                    let providers_clone = providers.clone();
+                    join_set.spawn(async move {
+                        tx_sender_worker(
+                            chain_id,
+                            providers_clone,
+                            wallet,
+                            from_address,
+                            addresses_clone,
+                        )
+                        .await
+                        .expect("failed to run worker");
+                    });
+                    i += 1;
+                }
             }
 
             // Exit condition
