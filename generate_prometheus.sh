@@ -7,26 +7,15 @@ set -e # Exit on any error
 
 echo "🔧 Generating prometheus.yml from inventory..."
 
-# Check if inventory files exist
+# Check if inventory file exists
 if [ ! -f "ansible/inventory.ini" ]; then
   echo "❌ Error: ansible/inventory.ini not found"
   exit 1
 fi
 
-if [ ! -f "ansible/inventory_spamnet.ini" ]; then
-  echo "❌ Error: ansible/inventory_spamnet.ini not found"
-  exit 1
-fi
-
-# Extract IP addresses from both inventory files
+# Extract IP addresses from inventory file
 echo "📥 Reading IP addresses from inventory.ini..."
-ips_regular=$(grep "ansible_host=" ansible/inventory.ini | sed 's/.*ansible_host=\([^[:space:]]*\).*/\1/')
-
-echo "📥 Reading IP addresses from inventory_spamnet.ini..."
-ips_spamnet=$(grep "ansible_host=" ansible/inventory_spamnet.ini | sed 's/.*ansible_host=\([^[:space:]]*\).*/\1/')
-
-# Combine both sets of IPs
-ips="$ips_regular $ips_spamnet"
+ips=$(grep "ansible_host=" ansible/inventory.ini | sed 's/.*ansible_host=\([^[:space:]]*\).*/\1/')
 
 # Create prometheus.yml
 echo "📝 Creating prometheus.yml..."
@@ -57,14 +46,14 @@ scrape_configs:
       - targets:
 EOF
 
-# Add regular cluster IPs
-for ip in $ips_regular; do
+# Add network metrics targets (port 9090)
+for ip in $ips; do
   echo "          - \"$ip:9090\"" >>prometheus.yml
 done
 
 cat >>prometheus.yml <<'EOF'
         labels:
-          cluster: "regular"
+          service: "network"
           
   - job_name: "tx-sender"
     honor_labels: true
@@ -73,14 +62,14 @@ cat >>prometheus.yml <<'EOF'
       - targets:
 EOF
 
-# Add spamnet cluster IPs
-for ip in $ips_spamnet; do
-  echo "          - \"$ip:9090\"" >>prometheus.yml
+# Add tx-sender metrics targets (port 9092)
+for ip in $ips; do
+  echo "          - \"$ip:9092\"" >>prometheus.yml
 done
 
 cat >>prometheus.yml <<'EOF'
         labels:
-          cluster: "spamnet"
+          service: "tx-sender"
 EOF
 
 echo "✅ Successfully generated prometheus.yml"
