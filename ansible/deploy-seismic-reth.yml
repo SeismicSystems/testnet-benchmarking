@@ -48,6 +48,18 @@
         enabled: yes
 
 
+    - name: Set soft ulimit for file descriptors
+      lineinfile:
+        path: /etc/security/limits.conf
+        line: "* soft nofile 20000"
+        backup: yes
+
+    - name: Set hard ulimit for file descriptors
+      lineinfile:
+        path: /etc/security/limits.conf
+        line: "* hard nofile 20000"
+        backup: yes
+
     - name: Increase connection tracking limits for high-throughput consensus
       sysctl:
         name: "{{ item.name }}"
@@ -64,11 +76,11 @@
 
     # Pre-built image path (if provided)
     - name: Check if pre-built image tar exists locally
-      local_action:
-        module: stat
+      stat:
         path: "{{ pre_built_image_tar }}"
       register: tar_file_check
       when: pre_built_image_tar is defined
+      delegate_to: localhost
       become: no
 
     - name: Fail if pre-built image tar doesn't exist
