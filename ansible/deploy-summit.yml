@@ -24,14 +24,14 @@
         filter: ansible_os_family
 
     - name: Create virtual environment
-      shell: python3.8 -m venv /home/ec2-user/venv
+      shell: python3.8 -m venv /home/ubuntu/venv
       become: yes
-      become_user: ec2-user
+      become_user: ubuntu
 
     - name: Upgrade pip in virtual environment
-      shell: /home/ec2-user/venv/bin/pip install --upgrade pip
+      shell: /home/ubuntu/venv/bin/pip install --upgrade pip
       become: yes
-      become_user: ec2-user
+      become_user: ubuntu
 
     - name: Fail if required variables are not provided
       fail:

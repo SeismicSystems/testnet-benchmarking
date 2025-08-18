@@ -47,6 +47,7 @@ module "us_west_2" {
   instance_type        = var.instance_type
   volume_size          = var.volume_size
   ssh_public_key_path  = var.ssh_public_key_path
+  ami_id               = var.ami_us_west_2
 }
 
 # Deploy to eu-central-1
@@ -63,6 +64,7 @@ module "eu_central_1" {
   instance_type        = var.instance_type
   volume_size          = var.volume_size
   ssh_public_key_path  = var.ssh_public_key_path
+  ami_id               = var.ami_eu_central_1
 }
 
 # Deploy to us-east-1
@@ -79,6 +81,7 @@ module "us_east_1" {
   instance_type        = var.instance_type
   volume_size          = var.volume_size
   ssh_public_key_path  = var.ssh_public_key_path
+  ami_id               = var.ami_us_east_1
 }
 
 # Deploy to ap-northeast-1
@@ -95,6 +98,7 @@ module "ap_northeast_1" {
   instance_type        = var.instance_type
   volume_size          = var.volume_size
   ssh_public_key_path  = var.ssh_public_key_path
+  ami_id               = var.ami_ap_northeast_1
 }
 
 # Deploy to sa-east-1
@@ -111,4 +115,5 @@ module "sa_east_1" {
   instance_type        = var.instance_type
   volume_size          = var.volume_size
   ssh_public_key_path  = var.ssh_public_key_path
+  ami_id               = var.ami_sa_east_1
 }

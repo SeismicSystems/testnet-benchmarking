@@ -27,3 +27,34 @@ variable "ssh_public_key_path" {
   type        = string
   default     = "~/.ssh/id_ed25519.pub"
 }
+
+variable "ami_us_west_2" {
+  description = "AMI ID for us-west-2 region"
+  type        = string
+  default     = ""
+}
+
+variable "ami_eu_central_1" {
+  description = "AMI ID for eu-central-1 region"
+  type        = string
+  default     = ""
+}
+
+variable "ami_us_east_1" {
+  description = "AMI ID for us-east-1 region"
+  type        = string
+  default     = ""
+}
+
+variable "ami_ap_northeast_1" {
+  description = "AMI ID for ap-northeast-1 region"
+  type        = string
+  default     = ""
+}
+
+variable "ami_sa_east_1" {
+  description = "AMI ID for sa-east-1 region"
+  type        = string
+  default     = ""
+}
+

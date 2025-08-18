@@ -2,6 +2,7 @@
 - name: Deploy tx-sender Docker container to EC2 instances
   hosts: ec2_instances
   become: yes
+  gather_facts: no
   vars:
     docker_image: "tx-sender"
     container_name: "tx-sender"
@@ -14,6 +15,10 @@
     - name: Bootstrap - Install pip using raw command
       raw: yum install -y python3-pip
       
+    - name: Discover Python version
+      raw: python3 --version
+      register: python_version
+      
     - name: Bootstrap - Install and upgrade pip
       raw: python3.8 -m pip install --upgrade pip
       
@@ -25,14 +30,14 @@
         filter: ansible_os_family
 
     - name: Create virtual environment
-      shell: python3.8 -m venv /home/ec2-user/venv
+      shell: python3.8 -m venv /home/ubuntu/venv
       become: yes
-      become_user: ec2-user
+      become_user: ubuntu
 
     - name: Upgrade pip in virtual environment
-      shell: /home/ec2-user/venv/bin/pip install --upgrade pip
+      shell: /home/ubuntu/venv/bin/pip install --upgrade pip
       become: yes
-      become_user: ec2-user
+      become_user: ubuntu
 
     - name: Install required Python packages for Docker modules (compatible versions)
       pip:

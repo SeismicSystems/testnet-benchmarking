@@ -38,7 +38,7 @@ struct Args {
     metrics_port: u16,
 }
 
-const MAX_CONCURRENT_TASKS: usize = 300;
+const MAX_CONCURRENT_TASKS: usize = 400;
 const NEW_TRANSACTION_INTERVAL: Duration = Duration::from_millis(20);
 const SLEEP_DURATION: Duration = Duration::from_secs(5);
 const TIMEOUT_DURATION: Duration = Duration::from_secs(5);

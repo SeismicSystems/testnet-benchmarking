@@ -149,7 +149,7 @@ resource "aws_security_group" "docker" {
 resource "aws_instance" "multi" {
   count = var.instances_per_region
 
-  ami             = data.aws_ami.amazon_linux.id
+  ami             = var.ami_id != "" ? var.ami_id : data.aws_ami.amazon_linux.id
   instance_type   = var.instance_type
   key_name        = aws_key_pair.deployer.key_name
   security_groups = [aws_security_group.ssh.name, aws_security_group.docker.name]
@@ -157,18 +157,43 @@ resource "aws_instance" "multi" {
   user_data = base64encode(<<-EOF
 #!/bin/bash
 
-# Update system packages
-yum update -y
+# Detect OS
+if [ -f /etc/os-release ]; then
+    . /etc/os-release
+    OS=$ID
+fi
 
-# Install Docker
-yum install -y docker
+# Create ubuntu user if it doesn't exist (for Amazon Linux)
+if [[ "$OS" == "amzn" ]] && ! id "ubuntu" &>/dev/null; then
+    useradd -m -s /bin/bash ubuntu
+    usermod -aG wheel ubuntu
+    echo "ubuntu ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+fi
 
-# Start and enable Docker service
-systemctl start docker
-systemctl enable docker
+# Update system packages and install Docker based on OS
+if [[ "$OS" == "amzn" ]]; then
+    # Amazon Linux
+    yum update -y
+    yum install -y docker
+    systemctl start docker
+    systemctl enable docker
+    
+    # Install Python 3.8 using Amazon Linux Extras
+    yum install -y amazon-linux-extras
+    amazon-linux-extras install python3.8 -y
+elif [[ "$OS" == "ubuntu" ]]; then
+    # Ubuntu
+    apt-get update -y
+    apt-get install -y docker.io
+    systemctl start docker
+    systemctl enable docker
+    
+    # Install Python 3
+    apt-get install -y python3 python3-pip
+fi
 
-# Add ec2-user to docker group
-usermod -a -G docker ec2-user
+# Add ubuntu to docker group
+usermod -a -G docker ubuntu
 
 # Install Docker Compose
 curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
@@ -177,15 +202,29 @@ chmod +x /usr/local/bin/docker-compose
 # Create symlink for docker-compose
 ln -sf /usr/local/bin/docker-compose /usr/bin/docker-compose
 
-# Install Python 3.8 using Amazon Linux Extras
-yum install -y amazon-linux-extras
-amazon-linux-extras install python3.8 -y
+# Setup SSH access for ubuntu user
+mkdir -p /home/ubuntu/.ssh
+chmod 700 /home/ubuntu/.ssh
 
-# Setup SSH access
-mkdir -p /home/ec2-user/.ssh
-chmod 700 /home/ec2-user/.ssh
-chmod 600 /home/ec2-user/.ssh/authorized_keys
-chown -R ec2-user:ec2-user /home/ec2-user/.ssh
+# Wait for ec2-user SSH keys to be set up and copy them
+if [[ "$OS" == "amzn" ]]; then
+    # Wait up to 30 seconds for ec2-user SSH keys
+    for i in {1..30}; do
+        if [ -f /home/ec2-user/.ssh/authorized_keys ]; then
+            cp /home/ec2-user/.ssh/authorized_keys /home/ubuntu/.ssh/authorized_keys
+            break
+        fi
+        sleep 1
+    done
+    
+    # If still no keys, try to get them from instance metadata
+    if [ ! -f /home/ubuntu/.ssh/authorized_keys ]; then
+        curl -s http://169.254.169.254/latest/meta-data/public-keys/0/openssh-key > /home/ubuntu/.ssh/authorized_keys
+    fi
+fi
+
+chmod 600 /home/ubuntu/.ssh/authorized_keys 2>/dev/null
+chown -R ubuntu:ubuntu /home/ubuntu/.ssh
 
 # Verify Docker installation
 docker --version
@@ -197,6 +236,7 @@ systemctl status docker --no-pager
 echo "Docker installation completed successfully!"
 echo "Region: ${var.region}"
 echo "Instance: $(hostname)"
+echo "Ubuntu user setup completed"
 EOF
   )
 

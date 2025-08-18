@@ -54,7 +54,7 @@ cat >"$OUTPUT_FILE" <<'EOF'
 EOF
 
 # Parse JSON and append to inventory
-jq -r '.[] | "\(.name) ansible_host=\(.public_ip) ansible_user=ec2-user"' instances.json >>"$OUTPUT_FILE"
+jq -r '.[] | "\(.name) ansible_host=\(.public_ip) ansible_user=ubuntu"' instances.json >>"$OUTPUT_FILE"
 
 # Add group variables
 cat >>"$OUTPUT_FILE" <<'EOF'

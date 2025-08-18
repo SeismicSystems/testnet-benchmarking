@@ -160,8 +160,8 @@ yum install -y docker
 systemctl start docker
 systemctl enable docker
 
-# Add ec2-user to docker group
-usermod -a -G docker ec2-user
+# Add ubuntu to docker group
+usermod -a -G docker ubuntu
 
 # Install Docker Compose
 curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
@@ -175,10 +175,10 @@ yum install -y amazon-linux-extras
 amazon-linux-extras install python3.8 -y
 
 # Setup SSH access
-mkdir -p /home/ec2-user/.ssh
-chmod 700 /home/ec2-user/.ssh
-chmod 600 /home/ec2-user/.ssh/authorized_keys
-chown -R ec2-user:ec2-user /home/ec2-user/.ssh
+mkdir -p /home/ubuntu/.ssh
+chmod 700 /home/ubuntu/.ssh
+chmod 600 /home/ubuntu/.ssh/authorized_keys
+chown -R ubuntu:ubuntu /home/ubuntu/.ssh
 
 # Verify Docker installation
 docker --version

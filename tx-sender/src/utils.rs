@@ -19,7 +19,7 @@ pub fn parse_inventory_ips(inventory: &str) -> Result<Vec<String>> {
     for line in lines {
         let line = line.trim();
         if line.starts_with("instance-") && line.contains("ansible_host=") {
-            // Extract IP address from line like: instance-0 ansible_host=35.94.11.26 ansible_user=ec2-user
+            // Extract IP address from line like: instance-0 ansible_host=35.94.11.26 ansible_user=ubuntu
             if let Some(host_part) = line
                 .split_whitespace()
                 .find(|part| part.starts_with("ansible_host="))
