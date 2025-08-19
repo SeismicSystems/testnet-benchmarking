@@ -63,7 +63,7 @@ RUN echo '#!/bin/bash\n\
 # Create JWT secret file from environment variable\n\
 echo "$JWT_SECRET" > "$JWT_FILE"\n\
 # Run summit with the JWT secret\n\
-exec ./summit --engine-jwt-path "$JWT_FILE" --prom-port "$PROM_PORT" --share-path ./share.pem --key-path ./key.pem --store-path ./store "$@" run' > /app/start.sh && \
+exec ./summit run --engine-jwt-path "$JWT_FILE" --prom-port "$PROM_PORT" --share-path ./share.pem --key-path ./key.pem --store-path ./store "$@"' > /app/start.sh && \
 chmod +x /app/start.sh
 
 
