@@ -47,7 +47,7 @@ WORKDIR /app
 COPY --from=builder /app/target/release/summit /app/summit
 
 # Environment variables for the consensus arguments
-ENV ENGINE_JWT=""
+
 ENV PORT=8080
 ENV PROM_PORT=9090
 
@@ -55,15 +55,11 @@ EXPOSE \
     $PORT \
     $PROM_PORT
 
-# JWT secret configuration (no default - must be provided)
-ENV JWT_FILE="./jwt.hex"
 
 # Create startup script
 RUN echo '#!/bin/bash\n\
-# Create JWT secret file from environment variable\n\
-echo "$JWT_SECRET" > "$JWT_FILE"\n\
-# Run summit with the JWT secret\n\
-exec ./summit run --engine-jwt-path "$JWT_FILE" --prom-port "$PROM_PORT" --share-path ./share.pem --key-path ./key.pem --store-path ./store "$@"' > /app/start.sh && \
+# Run summit without JWT secret\n\
+exec ./summit run --prom-port "$PROM_PORT" --share-path ./share.pem --key-path ./key.pem --store-path ./store "$@"' > /app/start.sh && \
 chmod +x /app/start.sh
 
 
