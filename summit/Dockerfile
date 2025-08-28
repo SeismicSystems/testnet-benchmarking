@@ -11,7 +11,8 @@ RUN git clone https://github.com/SeismicSystems/summit.git .
 
 # Checkout specific branch if needed
 #RUN git checkout devnet
-RUN git checkout d/threshold-simplex
+RUN git fetch
+RUN git checkout m/tests
 
 # Generate recipe file
 RUN cargo chef prepare --recipe-path recipe.json
@@ -50,6 +51,7 @@ COPY --from=builder /app/target/release/summit /app/summit
 
 ENV PORT=8080
 ENV PROM_PORT=9090
+ENV IPC_PATH="/tmp/reth_engine_api.ipc"
 
 EXPOSE \
     $PORT \
@@ -58,8 +60,8 @@ EXPOSE \
 
 # Create startup script
 RUN echo '#!/bin/bash\n\
-# Run summit without JWT secret\n\
-exec ./summit run --prom-port "$PROM_PORT" --share-path ./share.pem --key-path ./key.pem --store-path ./store "$@"' > /app/start.sh && \
+# Run summit with IPC path\n\
+exec ./summit run --prom-port "$PROM_PORT" --engine-ipc-path "$IPC_PATH" --share-path ./share.pem --key-path ./key.pem --store-path ./store "$@"' > /app/start.sh && \
 chmod +x /app/start.sh
 
 

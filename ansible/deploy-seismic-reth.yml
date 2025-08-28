@@ -188,6 +188,8 @@
           - "9001:9001"
           - "30303:30303"
           - "30303:30303/udp"
+        volumes:
+          - "/tmp:/tmp"
         env:
           JWT_SECRET: "{{ jwt_secret }}"
         log_driver: json-file
