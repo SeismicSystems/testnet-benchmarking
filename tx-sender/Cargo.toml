@@ -3,6 +3,10 @@ name = "tx-sender"
 version = "0.1.0"
 edition = "2021"
 
+[[bin]]
+name = "send-tx"
+path = "src/send_tx.rs"
+
 [dependencies]
 alloy = { version = "1.0", features = ["providers", "network", "signers", "signer-local", "rpc", "rpc-types", "eips"] }
 tokio = { version = "1", features = ["full"] }
