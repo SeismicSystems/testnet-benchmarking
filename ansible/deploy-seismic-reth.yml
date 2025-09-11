@@ -102,13 +102,26 @@
         - pre_built_image_tar is defined
         - tar_file_check.stat.exists
 
-    - name: Load pre-built Docker image from tar
-      docker_image:
-        name: "{{ docker_image }}"
-        load_path: "/tmp/seismic-reth.tar"
-        source: load
-        force_source: yes
+    - name: Load the tar file and capture output
+      shell: docker load --input "/tmp/seismic-reth.tar"
+      register: loaded_image_info
       when: pre_built_image_tar is defined
+
+    - name: Extract loaded image name from docker load output
+      set_fact:
+        loaded_image_name: "{{ loaded_image_info.stdout | regex_replace('Loaded image: (.+)', '\\1') }}"
+      when: pre_built_image_tar is defined
+
+    - name: Debug loaded image name
+      debug:
+        msg: "Loaded image: {{ loaded_image_name }}, Expected: {{ docker_image }}"
+      when: pre_built_image_tar is defined
+
+    - name: Tag loaded image as expected name if different
+      shell: docker tag "{{ loaded_image_name }}" "{{ docker_image }}:latest"
+      when: 
+        - pre_built_image_tar is defined
+        - loaded_image_name != (docker_image + ':latest')
 
     - name: Clean up tar file
       file:
