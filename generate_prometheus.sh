@@ -70,6 +70,20 @@ done
 cat >>prometheus.yml <<'EOF'
         labels:
           service: "tx-sender"
+          
+  - job_name: "seismic-reth"
+    static_configs:
+      - targets:
+EOF
+
+# Add seismic-reth metrics targets (port 9001)
+for ip in $ips; do
+  echo "          - \"$ip:9001\"" >>prometheus.yml
+done
+
+cat >>prometheus.yml <<'EOF'
+        labels:
+          service: "seismic-reth"
 EOF
 
 echo "✅ Successfully generated prometheus.yml"

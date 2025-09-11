@@ -71,10 +71,10 @@ RUN echo '#!/bin/bash\n\
 # Create JWT secret file from environment variable\n\
 echo "$JWT_SECRET" > "$JWT_FILE"\n\
 # Run seismic-reth with the JWT secret\n\
-exec ./seismic-reth node --auth-ipc --auth-ipc.path "$IPC_PATH" --enclave.mock-server --enclave.endpoint-port 1477 "$@"' > /app/start.sh && \
+exec ./seismic-reth node --auth-ipc --auth-ipc.path "$IPC_PATH" --enclave.mock-server --enclave.endpoint-port 1477 --metrics 0.0.0.0:"$METRICS_PORT" "$@"' > /app/start.sh && \
 chmod +x /app/start.sh
 
 
 # Set the startup script as the entrypoint
 ENTRYPOINT ["/app/start.sh"]
-CMD ["--http", "--http.addr", "0.0.0.0", "--ws", "--ws.addr", "0.0.0.0", "--authrpc.addr", "0.0.0.0", "--rpc.max-connections", "20000", "--txpool.pending-max-count", "20000", "--txpool.pending-max-size", "80"]
+CMD ["--http", "--http.addr", "0.0.0.0", "--ws", "--ws.addr", "0.0.0.0", "--authrpc.addr", "0.0.0.0", "--rpc.max-connections", "40000", "--txpool.pending-max-count", "40000", "--txpool.pending-max-size", "160"]
