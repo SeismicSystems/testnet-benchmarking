@@ -4,7 +4,8 @@ RUN cargo install cargo-chef
 WORKDIR /app
 
 FROM chef AS planner
-# Accept PAT as build argument (not stored in final image)
+# Accept build arguments
+ARG mode=prom
 
 # Clone the repository using PAT
 RUN git clone https://github.com/SeismicSystems/summit.git .
@@ -18,6 +19,9 @@ RUN git checkout m/tests
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
+# Accept build arguments in builder stage
+ARG mode=prom
+
 # Install dependencies
 RUN apt-get update && apt-get -y upgrade && apt-get install -y \
     clang \
@@ -28,13 +32,13 @@ RUN apt-get update && apt-get -y upgrade && apt-get install -y \
 
 # Copy recipe and build dependencies
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --features prom --release --recipe-path recipe.json
+RUN cargo chef cook --features $mode --release --recipe-path recipe.json
 
 # Copy source code from planner stage (PAT is not included here)
 COPY --from=planner /app .
 
 # Build the project
-RUN cargo build --features prom --release
+RUN cargo build --features $mode --release
 
 # Runtime stage
 FROM debian:bookworm-slim AS runtime
@@ -58,12 +62,10 @@ EXPOSE \
     $PROM_PORT
 
 
-# Create startup script
-RUN echo '#!/bin/bash\n\
-# Run summit with IPC path\n\
-exec ./summit run --prom-port "$PROM_PORT" --engine-ipc-path "$IPC_PATH" --share-path ./share.pem --key-path ./key.pem --store-path ./store "$@"' > /app/start.sh && \
-chmod +x /app/start.sh
-
-
-# Set the startup script as the entrypoint
-ENTRYPOINT ["/app/start.sh"]
+# Run summit directly
+ENTRYPOINT ["./summit", "run"]
+CMD ["--prom-port", "9090", \
+     "--engine-ipc-path", "/tmp/reth_engine_api.ipc", \
+     "--share-path", "./share.pem", \
+     "--key-path", "./key.pem", \
+     "--store-path", "./store"]
