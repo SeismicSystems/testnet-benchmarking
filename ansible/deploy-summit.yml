@@ -5,7 +5,6 @@
   vars:
     docker_image: "summit"
     container_name: "summit"
-    engine_jwt: "{{ vault_engine_jwt | default('') }}"
     base_port: 8080
     base_prom_port: 9090
     
@@ -33,15 +32,6 @@
       become: yes
       become_user: ubuntu
 
-    - name: Fail if required variables are not provided
-      fail:
-        msg: |
-          Required variables missing:
-          - Engine JWT: {{ 'OK' if engine_jwt != '' else 'MISSING' }}
-          
-          Please provide them using:
-          -e "engine_jwt=your_jwt_here"
-      when: engine_jwt == ''
 
     - name: Install required Python packages for Docker modules
       pip:
@@ -151,6 +141,7 @@
   gather_facts: no
   vars:
     base_port: 8080
+    eth_genesis_hash: "{{ genesis_hash | default('0x655cc1ecc77fe1eab4b1f461b7fddc9b06109b5ab3e9dc68c144b30c773') }}"
     
   tasks:
     - name: Gather all node information
@@ -166,7 +157,7 @@
     - name: Create initial genesis.toml template
       copy:
         content: |
-          eth_genesis_hash = "0x655cc1ecc77fe1eab4b1e62a1f461b7fddc9b06109b5ab3e9dc68c144b30c773"
+          eth_genesis_hash = "{{ eth_genesis_hash }}"
           leader_timeout_ms = 2000
           notarization_timeout_ms = 4000
           nullify_timeout_ms = 4000
@@ -251,7 +242,6 @@
   vars:
     docker_image: "summit"
     container_name: "summit"
-    engine_jwt: "{{ vault_engine_jwt | default('') }}"
     base_port: 8080
     base_prom_port: 9090
     
@@ -339,31 +329,91 @@
         - clear_state | default(false) | bool
         - dir_check is defined
 
+    - name: Build command arguments
+      set_fact:
+        summit_args: 
+          - "--port"
+          - "{{ instance_port }}"
+          - "--prom-port" 
+          - "{{ instance_prom_port }}"
+          - "--engine-ipc-path"
+          - "/tmp/reth-engine.ipc"
+          - "--share-path"
+          - "/app/share.pem"
+          - "--key-path"
+          - "/app/key.pem"
+          - "--store-path"
+          - "/app/store"
+    
+    - name: Create bench_block_dir directory if provided
+      file:
+        path: "{{ bench_block_dir }}"
+        state: directory
+        mode: '0755'
+      when: bench_block_dir is defined and bench_block_dir != ''
+
+    - name: Download bench tar file if bench_block_dir provided
+      get_url:
+        url: "{{ bench_tar_url }}"
+        dest: "/tmp/bench_blocks.tar.gz"
+        mode: '0644'
+      when: 
+        - bench_block_dir is defined and bench_block_dir != ''
+        - bench_tar_url is defined and bench_tar_url != ''
+
+    - name: Extract bench tar.gz to specified directory
+      shell: tar -xzvf /tmp/bench_blocks.tar.gz -C "{{ bench_block_dir }}" --strip-components=1
+      when: 
+        - bench_block_dir is defined and bench_block_dir != ''
+        - bench_tar_url is defined and bench_tar_url != ''
+
+    - name: Add bench_block_dir argument if provided
+      set_fact:
+        summit_args: "{{ summit_args + ['--bench-block-dir', bench_block_dir] }}"
+      when: bench_block_dir is defined and bench_block_dir != ''
+
     - name: Run consensus Docker container
       docker_container:
         name: "{{ container_name }}"
         image: "{{ docker_image }}"
-        command: ["--port", "{{ instance_port }}"]
+        command: "{{ summit_args }}"
         state: started
         restart_policy: no
         detach: yes
         network_mode: host
         working_dir: /app
-        env:
-          JWT_SECRET: "{{ engine_jwt }}"  # This is what the startup script expects
         ports:
           - "{{ instance_port }}:{{ instance_port }}"
           - "{{ instance_prom_port }}:{{ instance_prom_port }}"
-        volumes:
-          - "/tmp/example_genesis.toml:/app/example_genesis.toml:ro"
-          - "/tmp/key.pem:/app/key.pem:ro"
-          - "/tmp/share.pem:/app/share.pem:ro"
-          - "/root/.seismic:/root/.seismic:ro"
-          - "/tmp:/tmp"
+        volumes: >-
+          {{
+            [
+              "/tmp/example_genesis.toml:/app/example_genesis.toml:ro",
+              "/tmp/key.pem:/app/key.pem:ro", 
+              "/tmp/share.pem:/app/share.pem:ro",
+              "/root/.seismic:/root/.seismic:ro",
+              "/tmp:/tmp"
+            ] + 
+            ([bench_block_dir + ":" + bench_block_dir + ":ro"] if (bench_block_dir is defined and bench_block_dir != '') else [])
+          }}
         log_driver: json-file
         log_options:
           max-size: "50m"
           max-file: "3"
+
+    - name: Wait a moment for container to start
+      pause:
+        seconds: 10
+
+    - name: Check container logs before wait
+      command: docker logs --tail 20 {{ container_name }}
+      register: early_container_logs
+      ignore_errors: yes
+      
+    - name: Display early container logs
+      debug:
+        msg: "{{ early_container_logs.stdout_lines }}"
+      when: early_container_logs.stdout_lines is defined
 
     - name: Wait for container to be ready
       wait_for:

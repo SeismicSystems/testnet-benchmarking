@@ -11,9 +11,8 @@ ARG mode=prom
 RUN git clone https://github.com/SeismicSystems/summit.git .
 
 # Checkout specific branch if needed
-#RUN git checkout devnet
 RUN git fetch
-RUN git checkout m/tests
+RUN git checkout m/benchnet
 
 # Generate recipe file
 RUN cargo chef prepare --recipe-path recipe.json
@@ -32,13 +31,13 @@ RUN apt-get update && apt-get -y upgrade && apt-get install -y \
 
 # Copy recipe and build dependencies
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --features $mode --release --recipe-path recipe.json
+RUN cargo chef cook --features ${mode} --release --recipe-path recipe.json
 
 # Copy source code from planner stage (PAT is not included here)
 COPY --from=planner /app .
 
 # Build the project
-RUN cargo build --features $mode --release
+RUN cargo build --features ${mode} --release
 
 # Runtime stage
 FROM debian:bookworm-slim AS runtime
