@@ -12,7 +12,8 @@ RUN git clone https://github.com/SeismicSystems/summit.git .
 
 # Checkout specific branch if needed
 RUN git fetch
-RUN git checkout m/benchnet
+#RUN git checkout m/benchnet
+RUN git checkout m/benchmarks
 
 # Generate recipe file
 RUN cargo chef prepare --recipe-path recipe.json
@@ -39,6 +40,9 @@ COPY --from=planner /app .
 # Build the project
 RUN cargo build --features ${mode} --release
 
+# Save git commit info
+RUN git log -1 --format="%H %cd %s" > /tmp/git-info.txt
+
 # Runtime stage
 FROM debian:bookworm-slim AS runtime
 RUN apt-get update && apt-get -y upgrade && apt-get install -y \
@@ -49,6 +53,9 @@ WORKDIR /app
 
 # Copy the binary from builder stage
 COPY --from=builder /app/target/release/summit /app/summit
+
+# Copy git commit info from builder stage
+COPY --from=builder /tmp/git-info.txt /app/git-info.txt
 
 # Environment variables for the consensus arguments
 

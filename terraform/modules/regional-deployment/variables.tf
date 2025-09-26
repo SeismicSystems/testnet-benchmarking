@@ -26,6 +26,12 @@ variable "ssh_public_key_path" {
   default     = "~/.ssh/id_ed25519.pub"
 }
 
+variable "additional_ssh_public_key_path" {
+  description = "Path to additional SSH public key file"
+  type        = string
+  default     = ""
+}
+
 variable "ami_id" {
   description = "AMI ID to use for instances in this region"
   type        = string

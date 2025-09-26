@@ -8,11 +8,13 @@ FROM chef AS planner
 # Clone the seismic-reth repo
 RUN git clone https://github.com/SeismicSystems/seismic-reth.git .
 # Checkout the seismic branch
-RUN git checkout m/testnet
+RUN git checkout m/bench
+
+# Build argument for genesis file URL
+ARG GENESIS_URL=https://testnet-benchmarking.s3.us-west-2.amazonaws.com/dev.json
 
 RUN apt-get update && apt-get install -y curl
-RUN curl -o crates/seismic/chainspec/res/genesis/dev.json \
-    https://testnet-benchmarking.s3.us-west-2.amazonaws.com/dev.json
+RUN curl -o crates/seismic/chainspec/res/genesis/dev.json "${GENESIS_URL}"
 
 # Generate recipe file
 RUN cargo chef prepare --recipe-path recipe.json
@@ -62,19 +64,6 @@ EXPOSE \
     30303/udp
 
 
-# JWT secret configuration (no default - must be provided)
-ENV JWT_FILE="./jwt.hex"
-ENV IPC_PATH="/tmp/reth_engine_api.ipc"
-
-# Create startup script
-RUN echo '#!/bin/bash\n\
-# Create JWT secret file from environment variable\n\
-echo "$JWT_SECRET" > "$JWT_FILE"\n\
-# Run seismic-reth with the JWT secret\n\
-exec ./seismic-reth node --auth-ipc --auth-ipc.path "$IPC_PATH" --enclave.mock-server --enclave.endpoint-port 1477 --metrics 0.0.0.0:"$METRICS_PORT" "$@"' > /app/start.sh && \
-chmod +x /app/start.sh
-
-
-# Set the startup script as the entrypoint
-ENTRYPOINT ["/app/start.sh"]
-CMD ["--http", "--http.addr", "0.0.0.0", "--ws", "--ws.addr", "0.0.0.0", "--authrpc.addr", "0.0.0.0", "--rpc.max-connections", "40000", "--txpool.pending-max-count", "40000", "--txpool.pending-max-size", "160"]
+# Set the seismic-reth binary as the entrypoint
+ENTRYPOINT ["./seismic-reth", "node", "--enclave.mock-server", "--enclave.endpoint-port", "1477", "--metrics", "0.0.0.0:9001"]
+CMD ["--http", "--http.addr", "0.0.0.0", "--ws", "--ws.addr", "0.0.0.0", "--authrpc.addr", "0.0.0.0", "--auth-ipc", "--auth-ipc.path", "/tmp/reth_engine_api.ipc", "--rpc.max-connections", "40000", "--txpool.pending-max-count", "40000", "--txpool.pending-max-size", "160"]

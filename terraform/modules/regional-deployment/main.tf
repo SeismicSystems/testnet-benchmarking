@@ -104,12 +104,12 @@ resource "aws_security_group" "docker" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  ingress {
-    from_port   = 30303
-    to_port     = 30303
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+  #ingress {
+  #  from_port   = 30303
+  #  to_port     = 30303
+  #  protocol    = "tcp"
+  #  cidr_blocks = ["0.0.0.0/0"]
+  #}
 
   ingress {
     from_port   = 30303
@@ -222,6 +222,11 @@ if [[ "$OS" == "amzn" ]]; then
         curl -s http://169.254.169.254/latest/meta-data/public-keys/0/openssh-key > /home/ubuntu/.ssh/authorized_keys
     fi
 fi
+
+# Add additional public key if provided
+%{if var.additional_ssh_public_key_path != ""}
+echo "${file(var.additional_ssh_public_key_path)}" >> /home/ubuntu/.ssh/authorized_keys
+%{endif}
 
 chmod 600 /home/ubuntu/.ssh/authorized_keys 2>/dev/null
 chown -R ubuntu:ubuntu /home/ubuntu/.ssh

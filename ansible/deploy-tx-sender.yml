@@ -57,15 +57,15 @@
       blockinfile:
         path: /etc/security/limits.conf
         block: |
-          * soft nofile 10000
-          * hard nofile 10000
+          * soft nofile 65536
+          * hard nofile 65536
         marker: "# {mark} ANSIBLE MANAGED BLOCK - TX SENDER ULIMITS"
 
     - name: Set system-wide ulimits
       lineinfile:
         path: /etc/systemd/system.conf
         regexp: '^#?DefaultLimitNOFILE='
-        line: 'DefaultLimitNOFILE=10000'
+        line: 'DefaultLimitNOFILE=65536'
 
     - name: Reload systemd daemon
       systemd:

@@ -51,13 +51,13 @@
     - name: Set soft ulimit for file descriptors
       lineinfile:
         path: /etc/security/limits.conf
-        line: "* soft nofile 20000"
+        line: "* soft nofile 65536"
         backup: yes
 
     - name: Set hard ulimit for file descriptors
       lineinfile:
         path: /etc/security/limits.conf
-        line: "* hard nofile 20000"
+        line: "* hard nofile 65536"
         backup: yes
 
     - name: Increase connection tracking limits for high-throughput consensus
