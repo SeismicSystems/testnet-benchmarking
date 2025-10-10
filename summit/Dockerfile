@@ -13,13 +13,14 @@ RUN git clone https://github.com/SeismicSystems/summit.git .
 # Checkout specific branch if needed
 RUN git fetch
 #RUN git checkout m/benchnet
-RUN git checkout m/benchmarks
+#RUN git checkout m/benchmarks
+RUN git checkout m/checkpoint-loading-continued-metrics-test
 
 # Generate recipe file
 RUN cargo chef prepare --recipe-path recipe.json
 
 FROM chef AS builder
-# Accept build arguments in builder stage
+# Accept build arguments in builder stage - always use prom feature  
 ARG mode=prom
 
 # Install dependencies
@@ -32,13 +33,13 @@ RUN apt-get update && apt-get -y upgrade && apt-get install -y \
 
 # Copy recipe and build dependencies
 COPY --from=planner /app/recipe.json recipe.json
-RUN cargo chef cook --features ${mode} --release --recipe-path recipe.json
+RUN cargo chef cook --features prom,${mode} --release --recipe-path recipe.json
 
 # Copy source code from planner stage (PAT is not included here)
 COPY --from=planner /app .
 
 # Build the project
-RUN cargo build --features ${mode} --release
+RUN cargo build --features prom,${mode} --release
 
 # Save git commit info
 RUN git log -1 --format="%H %cd %s" > /tmp/git-info.txt

@@ -5,6 +5,7 @@ instances_per_region = 1
 
 # Optional: Override defaults
 instance_type = "m5.xlarge"
+#instance_type = "m5.8xlarge"
 volume_size = 4000
 ssh_public_key_path = "~/.ssh/id_ed25519.pub"
 additional_ssh_public_key_path = "~/.ssh/dalton_id25519.pub"

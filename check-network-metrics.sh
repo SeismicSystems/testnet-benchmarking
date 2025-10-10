@@ -86,36 +86,48 @@ get_instance_limits() {
     echo "Getting limits for $instance_type..." >&2
     
     local limits_json
-    limits_json=$(aws ec2 describe-instance-types --instance-types "$instance_type" --query 'InstanceTypes[0].[NetworkInfo.NetworkPerformance,EbsInfo.EbsOptimizedInfo.MaximumIops,EbsInfo.EbsOptimizedInfo.MaximumThroughputInMBps]' --output json 2>/dev/null)
+    limits_json=$(aws ec2 describe-instance-types --instance-types "$instance_type" --query 'InstanceTypes[0].[NetworkInfo.NetworkPerformance,EbsInfo.EbsOptimizedInfo.BaselineIops,EbsInfo.EbsOptimizedInfo.BaselineThroughputInMBps,EbsInfo.EbsOptimizedInfo.MaximumIops,EbsInfo.EbsOptimizedInfo.MaximumThroughputInMBps]' --output json 2>/dev/null)
     
     if [[ $? -ne 0 ]] || [[ -z "$limits_json" ]]; then
         echo "Warning: Could not get limits for $instance_type, using defaults" >&2
-        echo "Up to 10 Gigabit|4000|593.75"
+        echo "Up to 10 Gigabit|3000|125"
         return
     fi
     
     local network_perf=$(echo "$limits_json" | jq -r '.[0] // "Up to 10 Gigabit"')
-    local max_iops=$(echo "$limits_json" | jq -r '.[1] // 4000')
-    local max_throughput_mbps=$(echo "$limits_json" | jq -r '.[2] // 593.75')
+    local baseline_iops=$(echo "$limits_json" | jq -r '.[1] // 3000')
+    local baseline_throughput_mbps=$(echo "$limits_json" | jq -r '.[2] // 125')
+    local max_iops=$(echo "$limits_json" | jq -r '.[3] // 20000')
+    local max_throughput_mbps=$(echo "$limits_json" | jq -r '.[4] // 593.75')
     
-    echo "$network_perf|$max_iops|$max_throughput_mbps"
+    # Use actual baseline values from AWS instead of hardcoded gp3 limits
+    # If baseline values are null or 0, fall back to reasonable defaults
+    if [[ "$baseline_iops" == "null" ]] || [[ "$baseline_iops" == "0" ]]; then
+        baseline_iops=3000
+    fi
+    if [[ "$baseline_throughput_mbps" == "null" ]] || [[ "$baseline_throughput_mbps" == "0" ]]; then
+        baseline_throughput_mbps=125
+    fi
+    
+    echo "$network_perf|$baseline_iops|$baseline_throughput_mbps"
 }
 
-# Function to parse network performance string to baseline Gbps
+# Function to parse network performance string to baseline bps
 parse_network_performance() {
     local network_perf="$1"
     
-    # Parse various AWS network performance descriptions
+    # Parse AWS network performance to baseline (sustained) bandwidth
     case "$network_perf" in
-        *"25 Gigabit"*) echo "3125000000" ;;  # 25 Gbps baseline (25 * 1000^3 / 8)
-        *"10 Gigabit"*) echo "1250000000" ;;  # 10 Gbps baseline (assume 10% baseline)
-        *"5 Gigabit"*) echo "625000000" ;;    # 5 Gbps
-        *"Up to 10"*) echo "1250000000" ;;    # Up to 10 Gbps (assume ~10% baseline)
-        *"Up to 25"*) echo "3125000000" ;;    # Up to 25 Gbps
-        *"High"*) echo "1250000000" ;;        # High = ~10 Gbps
-        *"Moderate"*) echo "125000000" ;;     # Moderate = ~1 Gbps
-        *"Low"*) echo "62500000" ;;           # Low = ~500 Mbps
-        *) echo "1250000000" ;;               # Default fallback
+        *"25 Gigabit"*) echo "3125000000" ;;   # 25 Gbps dedicated
+        *"10 Gigabit"*) echo "1250000000" ;;   # 10 Gbps dedicated  
+        *"5 Gigabit"*) echo "625000000" ;;     # 5 Gbps dedicated
+        *"Up to 25"*) echo "625000000" ;;      # Up to 25 Gbps (assume ~2.5 Gbps baseline)
+        *"Up to 10"*) echo "125000000" ;;      # Up to 10 Gbps (assume ~1 Gbps baseline)
+        *"Up to 5"*) echo "62500000" ;;        # Up to 5 Gbps (assume ~500 Mbps baseline)
+        *"High"*) echo "125000000" ;;          # High = ~1 Gbps baseline
+        *"Moderate"*) echo "62500000" ;;       # Moderate = ~500 Mbps baseline  
+        *"Low"*) echo "31250000" ;;            # Low = ~250 Mbps baseline
+        *) echo "125000000" ;;                 # Conservative default
     esac
 }
 
@@ -227,9 +239,9 @@ else
 fi
 
 echo ""
-echo "Instance Limits ($INSTANCE_TYPE):"
-echo "  Network: $NETWORK_PERF"
-echo "  EBS: Up to $MAX_IOPS IOPS, up to $MAX_THROUGHPUT_MBPS MB/s throughput"
+echo "Instance Limits ($INSTANCE_TYPE) - Baseline/Sustained Performance:"
+echo "  Network: $NETWORK_PERF (baseline estimated)"
+echo "  EBS: $MAX_IOPS IOPS baseline, $MAX_THROUGHPUT_MBPS MB/s baseline"
 echo "========================================================================="
 
 # Query each instance
@@ -350,7 +362,7 @@ for i in "${!INSTANCES_TO_QUERY[@]}"; do
             # Calculate network utilization percentage
             MAX_TOTAL=$(echo "scale=2; ($MAX_IN + $MAX_OUT) * 8 / 300" | bc -l)
             UTILIZATION=$(echo "scale=1; $MAX_TOTAL * 100 / $BASELINE_BPS" | bc -l)
-            echo "    Network baseline utilization: ${UTILIZATION}%"
+            echo "    Network utilization: ${UTILIZATION}% of baseline (sustained)"
         fi
         
         # EBS metrics
@@ -375,11 +387,11 @@ for i in "${!INSTANCES_TO_QUERY[@]}"; do
             
             if (( $(echo "$TOTAL_IOPS > 0" | bc -l) )); then
                 IOPS_UTILIZATION=$(echo "scale=1; $TOTAL_IOPS * 100 / $MAX_IOPS" | bc -l)
-                echo "    EBS IOPS utilization: ${IOPS_UTILIZATION}% (of $MAX_IOPS baseline)"
+                echo "    EBS IOPS utilization: ${IOPS_UTILIZATION}% of ${MAX_IOPS} baseline (sustained)"
             fi
             if (( $(echo "$TOTAL_THROUGHPUT > 0" | bc -l) )); then
                 THROUGHPUT_UTILIZATION=$(echo "scale=1; $TOTAL_THROUGHPUT * 100 / $MAX_THROUGHPUT_MBPS" | bc -l)
-                echo "    EBS throughput utilization: ${THROUGHPUT_UTILIZATION}% (of $MAX_THROUGHPUT_MBPS MB/s baseline)"
+                echo "    EBS throughput utilization: ${THROUGHPUT_UTILIZATION}% of ${MAX_THROUGHPUT_MBPS} MB/s baseline (sustained)"
             fi
         fi
     fi
@@ -389,4 +401,4 @@ done
 
 echo "Note: Peak values are maximum over any 5-minute window in the time range"
 echo "Network: Baseline utilization shows peak usage vs estimated baseline (>100% uses burst capacity)"
-echo "EBS: Utilization shown vs instance limits. Volume limits may be lower (e.g., gp3: 3000 IOPS baseline)"
+echo "EBS: Utilization shown vs instance baseline limits. Volume limits may also apply."

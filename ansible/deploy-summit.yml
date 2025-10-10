@@ -367,6 +367,11 @@
         summit_args: "{{ summit_args + ['--bench-block-dir', bench_block_dir] }}"
       when: bench_block_dir is defined and bench_block_dir != ''
 
+    - name: Add worker_threads argument if provided
+      set_fact:
+        summit_args: "{{ summit_args + ['--worker-threads', worker_threads|string] }}"
+      when: worker_threads is defined
+
     - name: Run consensus Docker container
       docker_container:
         name: "{{ container_name }}"
