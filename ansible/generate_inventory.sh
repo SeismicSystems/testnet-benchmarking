@@ -4,16 +4,7 @@
 
 set -e
 
-# Check for spamnet argument
-SPAMNET_MODE=false
 TERRAFORM_DIR="../terraform"
-OUTPUT_FILE="inventory.ini"
-
-if [[ "$1" == "spamnet" ]]; then
-  SPAMNET_MODE=true
-  TERRAFORM_DIR="../terraform-spamnet"
-  OUTPUT_FILE="inventory_spamnet.ini"
-fi
 
 echo "Generating Ansible inventory from Terraform output..."
 
@@ -35,15 +26,27 @@ if [ ! -d "$TERRAFORM_DIR" ]; then
   exit 1
 fi
 
+# Get current Terraform workspace
+cd "$TERRAFORM_DIR"
+WORKSPACE=$(terraform workspace show)
+echo "Detected Terraform workspace: $WORKSPACE"
+
+# Set output file based on workspace
+if [[ "$WORKSPACE" == "default" ]]; then
+  OUTPUT_FILE="../ansible/inventory.ini"
+else
+  OUTPUT_FILE="../ansible/inventory_${WORKSPACE}.ini"
+fi
+
 # Get terraform output from terraform directory
 echo "Getting Terraform output..."
-cd "$TERRAFORM_DIR"
-terraform output -json instances >../ansible/instances.json
+terraform output -json instances >"$OUTPUT_FILE.tmp"
 cd ../ansible
 
 # Check if output exists
-if [ ! -s instances.json ]; then
+if [ ! -s "$OUTPUT_FILE.tmp" ]; then
   echo "Error: No terraform output found or output is empty"
+  rm -f "$OUTPUT_FILE.tmp"
   exit 1
 fi
 
@@ -54,7 +57,7 @@ cat >"$OUTPUT_FILE" <<'EOF'
 EOF
 
 # Parse JSON and append to inventory
-jq -r '.[] | "\(.name) ansible_host=\(.public_ip) ansible_user=ubuntu"' instances.json >>"$OUTPUT_FILE"
+jq -r '.[] | "\(.name) ansible_host=\(.public_ip) ansible_user=ubuntu"' "$OUTPUT_FILE.tmp" >>"$OUTPUT_FILE"
 
 # Add group variables
 cat >>"$OUTPUT_FILE" <<'EOF'
@@ -62,20 +65,20 @@ cat >>"$OUTPUT_FILE" <<'EOF'
 [ec2_instances:vars]
 ansible_ssh_private_key_file=~/.ssh/id_ed25519
 ansible_ssh_common_args='-o StrictHostKeyChecking=no'
-ansible_python_interpreter=/usr/bin/python3.8
+ansible_python_interpreter=auto_silent
 jwt_secret=f79ae8046bc11c9927afe911db7143c51a806c4a537cc08e0d37140b0192f430
 EOF
 
 # Clean up
-rm instances.json
+rm -f "$OUTPUT_FILE.tmp"
 
-echo "Inventory file generated successfully!"
+echo "Inventory file generated successfully for workspace: $WORKSPACE"
 echo "Contents of $OUTPUT_FILE:"
 echo "=========================="
 cat "$OUTPUT_FILE"
 echo "=========================="
 echo ""
 echo "To use this inventory:"
-echo "1. Update the SSH key path in $OUTPUT_FILE"
+echo "1. Update the SSH key path in $OUTPUT_FILE if needed"
 echo "2. Update the JWT secret if needed"
-echo "3. Run: ansible-playbook -i $OUTPUT_FILE deploy-docker.yml"
+echo "3. Run: ansible-playbook -i $OUTPUT_FILE <playbook>.yml"

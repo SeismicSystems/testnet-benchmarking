@@ -7,23 +7,14 @@
     container_name: "summit"
     base_port: 8080
     base_prom_port: 9090
-    
-  tasks:
-    - name: Bootstrap - Install pip using raw command
-      raw: yum install -y python3-pip
-      
-    - name: Bootstrap - Install and upgrade pip
-      raw: python3.8 -m pip install --upgrade pip
-      
-    - name: Bootstrap - Install Python packages
-      raw: python3.8 -m pip install virtualenv setuptools wheel
+    ansible_python_interpreter: auto
 
-    - name: Gather OS facts
-      setup:
-        filter: ansible_os_family
+  tasks:
+    - name: Bootstrap - Install pip and venv using raw command
+      raw: apt-get update && apt-get install -y python3-pip python3-venv
 
     - name: Create virtual environment
-      shell: python3.8 -m venv /home/ubuntu/venv
+      shell: python3 -m venv /home/ubuntu/venv
       become: yes
       become_user: ubuntu
 
@@ -32,14 +23,18 @@
       become: yes
       become_user: ubuntu
 
+    - name: Install required Python packages for Docker modules in venv
+      shell: /home/ubuntu/venv/bin/pip install "requests>=2.20.0,<3.0.0" "urllib3>=1.26.0,<2.0.0" "docker>=5.0.0"
+      become: yes
+      become_user: ubuntu
 
-    - name: Install required Python packages for Docker modules
-      pip:
-        name:
-          - "requests>=2.20.0,<3.0.0"
-          - "urllib3>=1.26.0,<2.0.0"
-          - "docker>=5.0.0"
-        state: present
+    - name: Set Python interpreter to venv
+      set_fact:
+        ansible_python_interpreter: /home/ubuntu/venv/bin/python
+
+    - name: Gather OS facts
+      setup:
+        filter: ansible_os_family
 
     - name: Ensure Docker service is running
       systemd:
@@ -89,7 +84,7 @@
       when: pre_built_image_tar is defined
 
     - name: Verify loaded image has prom-port
-      shell: docker run --entrypoint ./seismicbft-node {{ docker_image }} --help | grep -i prom || echo "NO PROM FOUND"
+      shell: docker run --entrypoint ./summit {{ docker_image }} --help | grep -i prom || echo "NO PROM FOUND"
       register: loaded_image_check
       when: pre_built_image_tar is defined
 
@@ -124,37 +119,56 @@
       when: pre_built_image_tar is not defined
       # no_log: true  # Temporarily disabled to see error
 
-    # Keys will be generated locally and copied to instances
     - name: Create key storage directory
       file:
         path: /opt/consensus/keys
         state: directory
         mode: '0755'
 
-    - name: Set node info (keys will be provided externally)
+    - name: Try to show existing keys
+      shell: docker run --rm --entrypoint ./summit -v /opt/consensus/keys:/keys {{ docker_image }} keys show --key-store-path /keys
+      register: summit_keyshow_output
+      ignore_errors: yes
+
+    - name: Generate keys if show failed
+      shell: docker run --rm --entrypoint ./summit -v /opt/consensus/keys:/keys {{ docker_image }} keys generate --key-store-path /keys
+      register: summit_keygen_output
+      when: summit_keyshow_output.rc != 0
+
+    - name: Set key source
+      set_fact:
+        key_source: "{{ summit_keygen_output if summit_keyshow_output.rc != 0 else summit_keyshow_output }}"
+
+    - name: Debug key output
+      debug:
+        msg: "Key output: {{ key_source.stdout }}"
+
+    - name: Extract keys
       set_fact:
         node_port: "{{ base_port }}"
         node_ip: "{{ ansible_host }}"
+        node_public_key: "{{ key_source.stdout | regex_search('Node Public Key \\(ed25519\\): ([a-f0-9]+)', '\\1') | first }}"
+        consensus_public_key: "{{ key_source.stdout | regex_search('Consensus Public Key \\(BLS\\): ([a-f0-9]+)', '\\1') | first }}"
 
-- name: Generate keys and create genesis file locally
+    - name: Validate keys were extracted
+      fail:
+        msg: "Failed to extract keys. node_public_key: '{{ node_public_key }}', consensus_public_key: '{{ consensus_public_key }}'"
+      when: node_public_key == '' or consensus_public_key == ''
+
+- name: Create genesis file locally with generated keys
   hosts: localhost
   gather_facts: no
   vars:
     base_port: 8080
     eth_genesis_hash: "{{ genesis_hash | default('0x655cc1ecc77fe1eab4b1f461b7fddc9b06109b5ab3e9dc68c144b30c773') }}"
-    
+    withdrawal_credentials: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+
   tasks:
-    - name: Gather all node information
+    - name: Gather all node information with keys
       set_fact:
         all_nodes: "{{ groups['ec2_instances'] | map('extract', hostvars) | list }}"
-        
-    - name: Clean up existing testnet directory
-      file:
-        path: "{{ playbook_dir }}/testnet"
-        state: absent
-      delegate_to: localhost
-        
-    - name: Create initial genesis.toml template
+
+    - name: Create genesis.toml with generated keys
       copy:
         content: |
           eth_genesis_hash = "{{ eth_genesis_hash }}"
@@ -165,65 +179,17 @@
           skip_timeout_views = 32
           max_message_size_bytes = 104857600
           namespace = "_SEISMIC_BFT"
-          identity = "b5c71ffedf9af700a95b200587265710e76337c9bcbfba8c1830683351b4c8982f507a59ddc821de53eb8b848993d1e38eba8abf3e7b18acebe921fdf23ac6d7a0d6c32010ceb149083d9fb5f5dc284a64eff22b59381bf5a58685e91a73aef28969e5b152f4ef6a6d9979f110fc43ad126e7a745fbab1a7f2a8d434e868c8de5d031a6af2d24f398e7c57fb79e4ae00"
-          {% for node in all_nodes %}
 
+          {% for node in all_nodes %}
           [[validators]]
-          public_key = "PLACEHOLDER_KEY_{{ loop.index0 }}"
+          node_public_key = "{{ node.node_public_key }}"
+          consensus_public_key = "{{ node.consensus_public_key }}"
           ip_address = "{{ node.node_ip }}:{{ node.node_port }}"
+          withdrawal_credentials = "{{ withdrawal_credentials }}"
+
           {% endfor %}
         dest: "{{ playbook_dir }}/genesis.toml"
         mode: '0644'
-      delegate_to: localhost
-
-    - name: Create example_genesis.toml from genesis.toml for DKG binary
-      copy:
-        src: "{{ playbook_dir }}/genesis.toml"
-        dest: "{{ playbook_dir }}/example_genesis.toml"
-        remote_src: no
-      delegate_to: localhost
-      
-    - name: Check if DKG binary exists
-      stat:
-        path: "{{ playbook_dir }}/dkg_testnet"
-      register: dkg_binary
-
-    - name: Execute DKG binary to generate keys and populate genesis.toml
-      command: ./dkg_testnet --nodes {{ all_nodes | length }}
-      args:
-        chdir: "{{ playbook_dir }}"
-      register: dkg_output
-      when: dkg_binary.stat.exists
-      
-    - name: Display DKG output
-      debug:
-        msg: "{{ dkg_output.stdout_lines }}"
-      when: dkg_binary.stat.exists
-
-    - name: Fail if DKG binary not found
-      fail:
-        msg: "DKG binary not found at {{ playbook_dir }}/dkg_testnet"
-      when: not dkg_binary.stat.exists
-
-    - name: Verify genesis file was updated
-      stat:
-        path: "{{ playbook_dir }}/example_genesis.toml"
-      register: genesis_stat
-      delegate_to: localhost
-
-    - name: Check if genesis still has placeholders
-      lineinfile:
-        path: "{{ playbook_dir }}/example_genesis.toml"
-        line: 'public_key = "PLACEHOLDER_KEY_0"'
-        state: absent
-      check_mode: yes
-      register: placeholder_check
-      delegate_to: localhost
-
-    - name: Fail if genesis still has placeholders
-      fail:
-        msg: "Genesis file still contains placeholder keys. DKG binary may have failed."
-      when: placeholder_check.changed
       delegate_to: localhost
 
     - name: Display generated genesis.toml content
@@ -231,7 +197,7 @@
         src: "{{ playbook_dir }}/genesis.toml"
       register: genesis_file
       delegate_to: localhost
-      
+
     - name: Show genesis.toml content
       debug:
         msg: "{{ genesis_file.content | b64decode }}"
@@ -244,53 +210,28 @@
     container_name: "summit"
     base_port: 8080
     base_prom_port: 9090
-    
-  tasks:
-    - name: Create consensus directory on host
-      file:
-        path: /root/.seismic/consensus
-        state: directory
-        mode: '0755'
-        
-    - name: Copy generated key files to instances
-      copy:
-        src: "{{ playbook_dir }}/testnet/node{{ ansible_play_hosts.index(inventory_hostname) }}/{{ item }}"
-        dest: "/root/.seismic/consensus/{{ item }}"
-        mode: '0600'
-      loop:
-        - key.pem
+    ansible_python_interpreter: auto
 
+  tasks:
     - name: Stop any existing containers first
       docker_container:
         name: "{{ container_name }}"
         state: absent
       ignore_errors: yes
 
-    - name: Force remove directories from /tmp with verification
+    - name: Force remove genesis file from /tmp with verification
       shell: |
-        rm -rf /tmp/{{ item }}
-        if [ -e "/tmp/{{ item }}" ]; then
-          echo "Failed to remove /tmp/{{ item }}"
-          ls -la /tmp/{{ item }}
+        rm -rf /tmp/genesis.toml
+        if [ -e "/tmp/genesis.toml" ]; then
+          echo "Failed to remove /tmp/genesis.toml"
+          ls -la /tmp/genesis.toml
           exit 1
         fi
-      loop:
-        - example_genesis.toml
-        - key.pem
-
-    - name: Copy key files to /tmp for Docker mounting
-      copy:
-        src: "{{ playbook_dir }}/testnet/node{{ ansible_play_hosts.index(inventory_hostname) }}/{{ item }}"
-        dest: "/tmp/{{ item }}"
-        mode: '0644'
-        force: yes
-      loop:
-        - key.pem
 
     - name: Copy genesis.toml to all instances
       copy:
-        src: "{{ playbook_dir }}/example_genesis.toml"
-        dest: "/tmp/example_genesis.toml"
+        src: "{{ playbook_dir }}/genesis.toml"
+        dest: "/tmp/genesis.toml"
         mode: '0644'
 
     - name: Set ports for this instance
@@ -328,15 +269,17 @@
 
     - name: Build command arguments
       set_fact:
-        summit_args: 
+        summit_args:
           - "--port"
           - "{{ instance_port }}"
-          - "--prom-port" 
+          - "--prom-port"
           - "{{ instance_prom_port }}"
           - "--engine-ipc-path"
           - "/tmp/reth_engine_api.ipc"
-          - "--key-path"
-          - "/app/key.pem"
+          - "--key-store-path"
+          - "/app/keys"
+          - "--genesis-path"
+          - "/app/genesis.toml"
           - "--store-path"
           - "/app/store"
     
@@ -388,11 +331,10 @@
         volumes: >-
           {{
             [
-              "/tmp/example_genesis.toml:/app/example_genesis.toml:ro",
-              "/tmp/key.pem:/app/key.pem:ro", 
-              "/root/.seismic:/root/.seismic:ro",
+              "/tmp/genesis.toml:/app/genesis.toml:ro",
+              "/opt/consensus/keys:/app/keys:ro",
               "/tmp:/tmp"
-            ] + 
+            ] +
             ([bench_block_dir + ":" + bench_block_dir + ":ro"] if (bench_block_dir is defined and bench_block_dir != '') else [])
           }}
         ulimits:

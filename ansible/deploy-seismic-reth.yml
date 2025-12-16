@@ -6,40 +6,49 @@
     docker_image: "seismic-reth"
     container_name: "seismic-reth"
     jwt_secret: "f79ae8046bc11c9927afe911db7143c51a806c4a537cc08e0d37140b0192f430"
+    ansible_python_interpreter: auto
     # Optional: provide pre_built_image_tar path to skip building
     # pre_built_image_tar: "../seismic-reth.tar"
-    
-  tasks:
-    - name: Bootstrap - Install pip using raw command
-      raw: yum install -y python3-pip
-      
-    - name: Bootstrap - Install and upgrade pip
-      raw: python3.8 -m pip install --upgrade pip
-      
-    - name: Bootstrap - Install Python packages
-      raw: python3.8 -m pip install virtualenv setuptools wheel
 
-    - name: Gather OS facts
-      setup:
-        filter: ansible_os_family
+  tasks:
+    - name: Bootstrap - Install pip and venv using raw command
+      raw: apt-get update && apt-get install -y python3-pip python3-venv
+
+    - name: Check if venv pip exists and is valid
+      stat:
+        path: /home/ubuntu/venv/bin/pip
+      register: venv_pip_check
+
+    - name: Remove incomplete venv if pip doesn't exist
+      file:
+        path: /home/ubuntu/venv
+        state: absent
+      when: not venv_pip_check.stat.exists
+      become: yes
 
     - name: Create virtual environment
-      shell: python3.8 -m venv /home/ubuntu/venv
+      shell: python3 -m venv /home/ubuntu/venv
       become: yes
       become_user: ubuntu
+      when: not venv_pip_check.stat.exists
 
     - name: Upgrade pip in virtual environment
       shell: /home/ubuntu/venv/bin/pip install --upgrade pip
       become: yes
       become_user: ubuntu
 
-    - name: Install required Python packages for Docker modules (compatible versions)
-      pip:
-        name:
-          - "requests>=2.20.0,<3.0.0"
-          - "urllib3>=1.26.0,<2.0.0"
-          - "docker>=5.0.0"
-        state: present
+    - name: Install required Python packages for Docker modules in venv
+      shell: /home/ubuntu/venv/bin/pip install "requests>=2.20.0,<3.0.0" "urllib3>=1.26.0,<2.0.0" "docker>=5.0.0"
+      become: yes
+      become_user: ubuntu
+
+    - name: Set Python interpreter to venv
+      set_fact:
+        ansible_python_interpreter: /home/ubuntu/venv/bin/python
+
+    - name: Gather OS facts
+      setup:
+        filter: ansible_os_family
 
     - name: Ensure Docker service is running
       systemd:
@@ -109,7 +118,7 @@
 
     - name: Extract loaded image name from docker load output
       set_fact:
-        loaded_image_name: "{{ loaded_image_info.stdout | regex_replace('Loaded image: (.+)', '\\1') }}"
+        loaded_image_name: "{{ loaded_image_info.stdout_lines | select('search', 'Loaded image:') | map('regex_replace', '^Loaded image: (.+)$', '\\1') | first | default('') }}"
       when: pre_built_image_tar is defined
 
     - name: Debug loaded image name
@@ -119,8 +128,9 @@
 
     - name: Tag loaded image as expected name if different
       shell: docker tag "{{ loaded_image_name }}" "{{ docker_image }}:latest"
-      when: 
+      when:
         - pre_built_image_tar is defined
+        - loaded_image_name != ''
         - loaded_image_name != (docker_image + ':latest')
 
     - name: Clean up tar file

@@ -4,7 +4,7 @@ locals {
     us_west_2      = length(module.us_west_2) > 0 ? module.us_west_2[0] : null
     eu_central_1   = length(module.eu_central_1) > 0 ? module.eu_central_1[0] : null
     us_east_1      = length(module.us_east_1) > 0 ? module.us_east_1[0] : null
-    ap_northeast_1 = length(module.ap_northeast_1) > 0 ? module.ap_northeast_1[0] : null
+    ap_southeast_1 = length(module.ap_southeast_1) > 0 ? module.ap_southeast_1[0] : null
     sa_east_1      = length(module.sa_east_1) > 0 ? module.sa_east_1[0] : null
   }
   

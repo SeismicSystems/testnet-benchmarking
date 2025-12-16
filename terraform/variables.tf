@@ -52,8 +52,8 @@ variable "ami_us_east_1" {
   default     = ""
 }
 
-variable "ami_ap_northeast_1" {
-  description = "AMI ID for ap-northeast-1 region"
+variable "ami_ap_southeast_1" {
+  description = "AMI ID for ap-southeast-1 region"
   type        = string
   default     = ""
 }
@@ -62,5 +62,16 @@ variable "ami_sa_east_1" {
   description = "AMI ID for sa-east-1 region"
   type        = string
   default     = ""
+}
+
+variable "os_type" {
+  description = "Operating system type (amazon-linux or ubuntu)"
+  type        = string
+  default     = "amazon-linux"
+
+  validation {
+    condition     = contains(["amazon-linux", "ubuntu"], var.os_type)
+    error_message = "The os_type must be either 'amazon-linux' or 'ubuntu'."
+  }
 }
 

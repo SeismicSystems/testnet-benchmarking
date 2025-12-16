@@ -1,5 +1,5 @@
 # Use official Rust image as base
-FROM rust:latest AS chef
+FROM rustlang/rust:nightly-bullseye AS chef
 RUN cargo install cargo-chef
 WORKDIR /app
 
@@ -14,7 +14,7 @@ RUN git clone https://github.com/SeismicSystems/summit.git .
 RUN git fetch
 #RUN git checkout m/benchnet
 #RUN git checkout m/benchmarks
-RUN git checkout m/checkpoint-loading-continued-metrics-test
+RUN git checkout m/commit-on-notarize
 
 # Generate recipe file
 RUN cargo chef prepare --recipe-path recipe.json
@@ -45,7 +45,7 @@ RUN cargo build --features prom,${mode} --release
 RUN git log -1 --format="%H %cd %s" > /tmp/git-info.txt
 
 # Runtime stage
-FROM debian:bookworm-slim AS runtime
+FROM debian:11-slim AS runtime
 RUN apt-get update && apt-get -y upgrade && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
@@ -73,6 +73,6 @@ EXPOSE \
 ENTRYPOINT ["./summit", "run"]
 CMD ["--prom-port", "9090", \
      "--engine-ipc-path", "/tmp/reth_engine_api.ipc", \
-     "--share-path", "./share.pem", \
-     "--key-path", "./key.pem", \
+     "--key-store-path", "./keys", \
+     "--genesis-path", "./genesis.toml", \
      "--store-path", "./store"]

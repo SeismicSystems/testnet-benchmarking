@@ -1,0 +1,397 @@
+---
+- name: Provision testnet nodes
+  hosts: ec2_instances
+  become: yes
+  gather_facts: no
+  vars:
+    summit_repo: "https://github.com/SeismicSystems/summit.git"
+    summit_branch: "m/upgrade-commonware-0.0.63"
+    reth_repo: "https://github.com/SeismicSystems/seismic-reth.git"
+    reth_branch: "m/update-deposit-request-w-gen"
+    ansible_python_interpreter: auto_silent
+
+  tasks:
+    - name: Gather facts
+      setup:
+
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Install system dependencies
+      apt:
+        name:
+          - build-essential
+          - libssl-dev
+          - pkg-config
+          - clang
+          - curl
+          - git
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Check if Rust is already installed
+      stat:
+        path: /home/ubuntu/.cargo/bin/rustc
+      register: rust_installed
+      become: no
+
+    - name: Download rustup installer
+      get_url:
+        url: https://sh.rustup.rs
+        dest: /tmp/rustup-init.sh
+        mode: '0755'
+      become: no
+      when: not rust_installed.stat.exists
+
+    - name: Install Rust
+      shell: /tmp/rustup-init.sh -y
+      become: no
+      when: not rust_installed.stat.exists
+
+    - name: Source cargo environment
+      lineinfile:
+        path: /home/ubuntu/.bashrc
+        line: 'source "$HOME/.cargo/env"'
+        create: yes
+      become: no
+
+    - name: Check if summit repository exists
+      stat:
+        path: /home/ubuntu/summit
+      register: summit_exists
+      become: no
+
+    - name: Clone or update summit repository
+      git:
+        repo: "{{ summit_repo }}"
+        dest: /home/ubuntu/summit
+        version: "{{ summit_branch }}"
+        update: yes
+        force: yes
+      become: no
+
+    - name: Create initial example_genesis.toml template for summit
+      copy:
+        dest: /home/ubuntu/summit/example_genesis.toml
+        content: |
+          eth_genesis_hash = "0x655cc1ecc77fe1eab4b1e62a1f461b7fddc9b06109b5ab3e9dc68c144b30c773"
+          leader_timeout_ms = 2000
+          notarization_timeout_ms = 4000
+          nullify_timeout_ms = 4000
+          activity_timeout_views = 256
+          skip_timeout_views = 32
+          max_message_size_bytes = 104857600
+          namespace = "_SEISMIC_BFT"
+          {% set withdrawal_creds = ["0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266", "0x70997970C51812dc3A010C7d01b50e0d17dc79C8", "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC", "0x90F79bf6EB2c4f870365E785982E1f101E93b906"] %}
+
+          {% for host in groups['ec2_instances'] %}
+          [[validators]]
+          node_public_key = "PLACEHOLDER_NODE_{{ loop.index0 }}"
+          consensus_public_key = "PLACEHOLDER_CONSENSUS_{{ loop.index0 }}"
+          ip_address = "{{ hostvars[host].ansible_host }}:8080"
+          withdrawal_credentials = "{{ withdrawal_creds[loop.index0 % withdrawal_creds|length] }}"
+
+          {% endfor %}
+        mode: '0644'
+      become: no
+
+    - name: Build summit with prom feature
+      shell: |
+        source "$HOME/.cargo/env"
+        cargo build --release --bin summit --features prom
+      args:
+        chdir: /home/ubuntu/summit
+        executable: /bin/bash
+      become: no
+      environment:
+        CARGO_HOME: /home/ubuntu/.cargo
+        RUSTUP_HOME: /home/ubuntu/.rustup
+
+    - name: Check if seismic-reth repository exists
+      stat:
+        path: /home/ubuntu/seismic-reth
+      register: reth_exists
+      become: no
+
+    - name: Clone or update seismic-reth repository
+      git:
+        repo: "{{ reth_repo }}"
+        dest: /home/ubuntu/seismic-reth
+        version: "{{ reth_branch }}"
+        update: yes
+        force: yes
+      become: no
+
+    - name: Build seismic-reth
+      shell: |
+        source "$HOME/.cargo/env"
+        cargo build --release --bin seismic-reth
+      args:
+        chdir: /home/ubuntu/seismic-reth
+        executable: /bin/bash
+      become: no
+      environment:
+        CARGO_HOME: /home/ubuntu/.cargo
+        RUSTUP_HOME: /home/ubuntu/.rustup
+
+    - name: Check if summit-rpc-client repository exists
+      stat:
+        path: /home/ubuntu/summit-rpc-client
+      register: rpc_client_exists
+      become: no
+
+    - name: Clone summit-rpc-client repository
+      git:
+        repo: "https://github.com/SeismicSystems/summit-rpc-client.git"
+        dest: /home/ubuntu/summit-rpc-client
+        update: no
+      become: no
+
+    - name: Build summit-rpc-client
+      shell: |
+        source "$HOME/.cargo/env"
+        cargo build
+      args:
+        chdir: /home/ubuntu/summit-rpc-client
+        executable: /bin/bash
+      become: no
+      environment:
+        CARGO_HOME: /home/ubuntu/.cargo
+        RUSTUP_HOME: /home/ubuntu/.rustup
+
+    - name: Check if deposit-cli repository exists
+      stat:
+        path: /home/ubuntu/deposit-cli
+      register: deposit_cli_exists
+      become: no
+
+    - name: Clone deposit-cli repository
+      git:
+        repo: "https://github.com/SeismicSystems/deposit-cli.git"
+        dest: /home/ubuntu/deposit-cli
+        update: no
+      become: no
+
+    - name: Build deposit-cli
+      shell: |
+        source "$HOME/.cargo/env"
+        cargo build
+      args:
+        chdir: /home/ubuntu/deposit-cli
+        executable: /bin/bash
+      become: no
+      environment:
+        CARGO_HOME: /home/ubuntu/.cargo
+        RUSTUP_HOME: /home/ubuntu/.rustup
+
+    - name: Install supervisor
+      apt:
+        name: supervisor
+        state: present
+        update_cache: yes
+      when: ansible_os_family == "Debian"
+
+    - name: Create supervisor directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - /etc/supervisor
+        - /etc/supervisor/conf.d
+        - /var/log/supervisor
+
+    - name: Create main supervisord.conf
+      copy:
+        dest: /etc/supervisor/supervisord.conf
+        content: |
+          ; supervisor config file
+
+          [unix_http_server]
+          file=/var/run/supervisor.sock   ; (the path to the socket file)
+          chmod=0700                       ; sockef file mode (default 0700)
+
+          [supervisord]
+          logfile=/var/log/supervisor/supervisord.log ; (main log file;default $CWD/supervisord.log)
+          pidfile=/var/run/supervisord.pid ; (supervisord pidfile;default supervisord.pid)
+          childlogdir=/var/log/supervisor            ; ('AUTO' child log dir, default $TEMP)
+
+          ; the below section must remain in the config file for RPC
+          ; (supervisorctl/web interface) to work, additional interfaces may be
+          ; added by defining them in separate rpcinterface: sections
+          [rpcinterface:supervisor]
+          supervisor.rpcinterface_factory = supervisor.rpcinterface:make_main_rpcinterface
+
+          [supervisorctl]
+          serverurl=unix:///var/run/supervisor.sock ; use a unix:// URL  for a unix socket
+
+          ; The [include] section can just contain the "files" setting.  This
+          ; setting can list multiple files (separated by whitespace or
+          ; newlines).  It can also contain wildcards.  The filenames are
+          ; interpreted as relative to this file.  Included files *cannot*
+          ; include files themselves.
+
+          [include]
+          files = /etc/supervisor/conf.d/*.conf
+        mode: '0644'
+
+    - name: Create devnet supervisor configuration
+      copy:
+        dest: /etc/supervisor/conf.d/devnet.conf
+        content: |
+          [supervisord]
+          environment=RUST_BACKTRACE="full",
+              RUST_LOG="info"
+
+          [program:reth]
+          command=/home/ubuntu/seismic-reth/target/release/seismic-reth
+              node -vvv
+              --disable-discovery
+              --http
+              --http.addr 0.0.0.0
+              --http.port 8545
+              --http.api all
+              --http.corsdomain *
+              --ws
+              --ws.addr 0.0.0.0
+              --ws.port 8546
+              --ws.api all
+              --ws.origins *
+              --port 30303
+              --metrics "0.0.0.0:9001"
+              --datadir /home/ubuntu/.reth
+              --log.file.directory /home/ubuntu/.reth/logs
+              --auth-ipc
+              --auth-ipc.path /tmp/reth_engine_api.ipc
+              --enclave.mock-server
+              --enclave.endpoint-port 1477
+
+          autostart=true
+          autorestart=true
+          startsecs=10
+          priority=200
+          stdout_logfile=/var/log/reth.log
+          stdout_logfile_maxbytes=0
+          stderr_logfile=/var/log/reth.err
+          stderr_logfile_maxbytes=0
+
+          [program:summit]
+          command=/home/ubuntu/summit/target/release/summit run
+                  --genesis-path /home/ubuntu/summit/example_genesis.toml
+                  --key-store-path /home/ubuntu/.seismic/consensus/keys
+                  --store-path /home/ubuntu/.seismic/consensus/store
+                  --port 8080
+          autostart=false
+          autorestart=false
+          startsecs=3
+          priority=100
+          stdout_logfile=/var/log/summit.log
+          stdout_logfile_maxbytes=0
+          stderr_logfile=/var/log/summit.err
+          stderr_logfile_maxbytes=0
+
+          [program:summit-ckpt]
+          command=/home/ubuntu/summit/target/release/summit run
+                  --genesis-path /home/ubuntu/summit/example_genesis.toml
+                  --key-store-path /home/ubuntu/.seismic/consensus/keys
+                  --store-path /home/ubuntu/.seismic/consensus/store
+                  --checkpoint-path /home/ubuntu/summit_checkpoint.bin
+                  --port 8080
+                  --ip 172.206.115.69:8080
+          autostart=false
+          autorestart=false
+          startsecs=3
+          priority=100
+          stdout_logfile=/var/log/summit.log
+          stdout_logfile_maxbytes=0
+          stderr_logfile=/var/log/summit.err
+          stderr_logfile_maxbytes=0
+        mode: '0644'
+
+    - name: Reload supervisor to load new configuration
+      command: supervisorctl reload
+      become: yes
+
+    - name: Reread supervisor configuration
+      command: supervisorctl reread
+      become: yes
+
+    - name: Update supervisor processes
+      command: supervisorctl update
+      become: yes
+
+    - name: Create .seismic/consensus/keys directory
+      file:
+        path: /home/ubuntu/.seismic/consensus/keys
+        state: directory
+        owner: ubuntu
+        group: ubuntu
+        mode: '0755'
+      become: yes
+
+    - name: Check if node key file exists
+      stat:
+        path: /home/ubuntu/.seismic/consensus/keys/node_key.pem
+      register: node_key_exists
+      become: no
+
+    - name: Generate keys if they don't exist
+      shell: |
+        source "$HOME/.cargo/env"
+        cargo run --release --bin summit --features prom -- keys generate --key-store-path /home/ubuntu/.seismic/consensus/keys
+      args:
+        chdir: /home/ubuntu/summit
+        executable: /bin/bash
+      become: no
+      environment:
+        CARGO_HOME: /home/ubuntu/.cargo
+        RUSTUP_HOME: /home/ubuntu/.rustup
+      when: not node_key_exists.stat.exists
+
+    - name: Show public keys
+      shell: |
+        source "$HOME/.cargo/env"
+        cargo run --release --bin summit --features prom -- keys show --key-store-path /home/ubuntu/.seismic/consensus/keys
+      args:
+        chdir: /home/ubuntu/summit
+        executable: /bin/bash
+      become: no
+      environment:
+        CARGO_HOME: /home/ubuntu/.cargo
+        RUSTUP_HOME: /home/ubuntu/.rustup
+      register: key_show_output
+
+    - name: Extract public keys from show output
+      set_fact:
+        node_public_key: "{{ key_show_output.stdout | regex_search('Node Public Key \\(ed25519\\): ([a-f0-9]+)', '\\1') | first }}"
+        consensus_public_key: "{{ key_show_output.stdout | regex_search('Consensus Public Key \\(BLS\\): ([a-f0-9]+)', '\\1') | first }}"
+
+    - name: Display public keys
+      debug:
+        msg: "Node {{ ansible_host }} - Node Public Key: {{ node_public_key }}, Consensus Public Key: {{ consensus_public_key }}"
+
+- name: Generate complete genesis file locally
+  hosts: localhost
+  gather_facts: no
+  tasks:
+    - name: Build genesis file content with all public keys
+      template:
+        src: "{{ playbook_dir }}/genesis_template.toml.j2"
+        dest: "{{ playbook_dir }}/example_genesis.toml"
+        mode: '0644'
+
+- name: Distribute genesis file to all nodes
+  hosts: ec2_instances
+  become: no
+  tasks:
+    - name: Copy complete genesis file to all nodes
+      copy:
+        src: "{{ playbook_dir }}/example_genesis.toml"
+        dest: /home/ubuntu/summit/example_genesis.toml
+        mode: '0644'
+
+    - name: Display completion message
+      debug:
+        msg: "Provisioning complete for {{ ansible_host }}."

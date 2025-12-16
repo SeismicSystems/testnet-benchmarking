@@ -10,24 +10,42 @@ terraform {
 
 # Find latest Amazon Linux 2 AMI for x86_64
 data "aws_ami" "amazon_linux" {
+  count       = var.os_type == "amazon-linux" ? 1 : 0
   most_recent = true
   owners      = ["amazon"]
-  
+
   filter {
     name   = "name"
     values = ["amzn2-ami-hvm-*-x86_64-gp2"]
   }
 }
 
+# Find latest Ubuntu 24.04 LTS AMI for x86_64
+data "aws_ami" "ubuntu" {
+  count       = var.os_type == "ubuntu" ? 1 : 0
+  most_recent = true
+  owners      = ["099720109477"] # Canonical
+
+  filter {
+    name   = "name"
+    values = ["ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+}
+
 # Create key pair
 resource "aws_key_pair" "deployer" {
-  key_name   = "deployer-key-${var.region}"
+  key_name   = "deployer-key-${terraform.workspace}-${var.region}"
   public_key = file(var.ssh_public_key_path)
 }
 
 # Create security group for SSH
 resource "aws_security_group" "ssh" {
-  name        = "ssh-sg-${var.region}"
+  name        = "ssh-sg-${terraform.workspace}-${var.region}"
   description = "Allow SSH access"
 
   ingress {
@@ -45,14 +63,15 @@ resource "aws_security_group" "ssh" {
   }
 
   tags = {
-    Name   = "ssh-sg-${var.region}"
+    Name   = "ssh-sg-${terraform.workspace}-${var.region}"
     Region = var.region
+    Workspace = terraform.workspace
   }
 }
 
 # Create security group for Docker applications
 resource "aws_security_group" "docker" {
-  name        = "docker-sg-${var.region}"
+  name        = "docker-sg-${terraform.workspace}-${var.region}"
   description = "Allow Docker application access"
 
   ingress {
@@ -140,8 +159,9 @@ resource "aws_security_group" "docker" {
   }
 
   tags = {
-    Name   = "docker-sg-${var.region}"
+    Name   = "docker-sg-${terraform.workspace}-${var.region}"
     Region = var.region
+    Workspace = terraform.workspace
   }
 }
 
@@ -149,7 +169,7 @@ resource "aws_security_group" "docker" {
 resource "aws_instance" "multi" {
   count = var.instances_per_region
 
-  ami             = var.ami_id != "" ? var.ami_id : data.aws_ami.amazon_linux.id
+  ami             = var.ami_id != "" ? var.ami_id : (var.os_type == "amazon-linux" ? data.aws_ami.amazon_linux[0].id : data.aws_ami.ubuntu[0].id)
   instance_type   = var.instance_type
   key_name        = aws_key_pair.deployer.key_name
   security_groups = [aws_security_group.ssh.name, aws_security_group.docker.name]
@@ -253,8 +273,9 @@ EOF
   }
 
   tags = {
-    Name   = "instance-${var.region}-${count.index}"
+    Name   = "instance-${terraform.workspace}-${var.region}-${count.index}"
     Region = var.region
     Index  = count.index
+    Workspace = terraform.workspace
   }
 }

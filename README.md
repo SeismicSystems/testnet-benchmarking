@@ -27,7 +27,7 @@ aws_session_token = ...
 ### 3. Deploy EC2 instances
 In `terraform/terraform.tfvars`, you can specify the number of instances, and the different regions:
 ```
-regions = ["us-west-2", "eu-central-1", "us-east-1", "ap-northeast-1", "sa-east-1"]
+regions = ["us-west-2", "eu-central-1", "us-east-1", "ap-southeast-1", "sa-east-1"]
 instances_per_region = 4
 
 ```
@@ -109,7 +109,7 @@ ansible-playbook -i inventory.ini deploy-summit.yml \
 ### 5. Spam transactions
 In `terraform-spamnet/terraform.tfvars`, you can specify the number of instances, and the different regions:
 ```
-regions = ["us-west-2", "eu-central-1", "us-east-1", "ap-northeast-1", "sa-east-1"]
+regions = ["us-west-2", "eu-central-1", "us-east-1", "ap-southeast-1", "sa-east-1"]
 instances_per_region = 4
 ```
 

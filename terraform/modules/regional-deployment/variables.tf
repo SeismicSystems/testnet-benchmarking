@@ -37,3 +37,14 @@ variable "ami_id" {
   type        = string
   default     = ""
 }
+
+variable "os_type" {
+  description = "Operating system type (amazon-linux or ubuntu)"
+  type        = string
+  default     = "amazon-linux"
+
+  validation {
+    condition     = contains(["amazon-linux", "ubuntu"], var.os_type)
+    error_message = "The os_type must be either 'amazon-linux' or 'ubuntu'."
+  }
+}

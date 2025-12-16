@@ -1,5 +1,5 @@
 # Use official Rust image as base
-FROM rust:latest AS chef
+FROM rustlang/rust:nightly-bullseye AS chef
 RUN cargo install cargo-chef
 WORKDIR /app
 
@@ -8,10 +8,11 @@ FROM chef AS planner
 # Clone the seismic-reth repo
 RUN git clone https://github.com/SeismicSystems/seismic-reth.git .
 # Checkout the seismic branch
-RUN git checkout m/bench
+RUN git checkout m/seismic
+#RUN git checkout seismic
 
 # Build argument for genesis file URL
-ARG GENESIS_URL=https://testnet-benchmarking.s3.us-west-2.amazonaws.com/dev.json
+ARG GENESIS_URL=https://testnet-benchmarking.s3.us-west-2.amazonaws.com/bench_dev.json
 
 RUN apt-get update && apt-get install -y curl
 RUN curl -o crates/seismic/chainspec/res/genesis/dev.json "${GENESIS_URL}"
@@ -34,7 +35,7 @@ COPY --from=planner /app .
 RUN cargo build --release
 
 # Runtime stage
-FROM debian:bookworm-slim AS runtime
+FROM debian:11-slim AS runtime
 RUN apt-get update && apt-get -y upgrade && apt-get install -y libclang-dev pkg-config
 
 WORKDIR /app
