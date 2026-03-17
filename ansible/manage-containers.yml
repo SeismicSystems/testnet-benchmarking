@@ -6,17 +6,24 @@
     # Container names to stop
     containers:
       - seismic-reth
-      - consensus-node
-      - seismic-simplex
+      - summit
     
   tasks:
-    - name: Install required Python packages for Docker modules
-      pip:
-        name:
-          - "requests>=2.20.0,<3.0.0"
-          - "urllib3>=1.26.0,<2.0.0"
-          - "docker>=5.0.0"
-        state: present
+    - name: Create virtual environment
+      shell: python3 -m venv /home/ubuntu/venv
+      args:
+        creates: /home/ubuntu/venv/bin/pip
+      become: yes
+      become_user: ubuntu
+
+    - name: Install required Python packages for Docker modules in venv
+      shell: /home/ubuntu/venv/bin/pip install "requests>=2.20.0,<3.0.0" "urllib3>=1.26.0,<2.0.0" "docker>=5.0.0"
+      become: yes
+      become_user: ubuntu
+
+    - name: Set Python interpreter to venv
+      set_fact:
+        ansible_python_interpreter: /home/ubuntu/venv/bin/python
 
     - name: Stop specific containers
       docker_container:

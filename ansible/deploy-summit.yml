@@ -11,7 +11,15 @@
 
   tasks:
     - name: Bootstrap - Install pip and venv using raw command
-      raw: apt-get update && apt-get install -y python3-pip python3-venv
+      raw: |
+        apt-get clean && \
+        rm -rf /var/lib/apt/lists/* && \
+        apt-get update && \
+        apt-get install -y python3-pip python3-venv
+      retries: 3
+      delay: 10
+      register: bootstrap_result
+      until: bootstrap_result.rc == 0
 
     - name: Create virtual environment
       shell: python3 -m venv /home/ubuntu/venv
@@ -130,6 +138,19 @@
       register: summit_keyshow_output
       ignore_errors: yes
 
+    - name: Clean up corrupted keys if show failed
+      file:
+        path: /opt/consensus/keys
+        state: absent
+      when: summit_keyshow_output.rc != 0
+
+    - name: Recreate key storage directory after cleanup
+      file:
+        path: /opt/consensus/keys
+        state: directory
+        mode: '0755'
+      when: summit_keyshow_output.rc != 0
+
     - name: Generate keys if show failed
       shell: docker run --rm --entrypoint ./summit -v /opt/consensus/keys:/keys {{ docker_image }} keys generate --key-store-path /keys
       register: summit_keygen_output
@@ -147,12 +168,12 @@
       set_fact:
         node_port: "{{ base_port }}"
         node_ip: "{{ ansible_host }}"
-        node_public_key: "{{ key_source.stdout | regex_search('Node Public Key \\(ed25519\\): ([a-f0-9]+)', '\\1') | first }}"
-        consensus_public_key: "{{ key_source.stdout | regex_search('Consensus Public Key \\(BLS\\): ([a-f0-9]+)', '\\1') | first }}"
+        node_public_key: "{{ key_source.stdout | regex_search('Node Public Key \\(ed25519\\): ([a-f0-9]+)', '\\1') | default([]) | first | default('') }}"
+        consensus_public_key: "{{ key_source.stdout | regex_search('Consensus Public Key \\(BLS\\): ([a-f0-9]+)', '\\1') | default([]) | first | default('') }}"
 
     - name: Validate keys were extracted
       fail:
-        msg: "Failed to extract keys. node_public_key: '{{ node_public_key }}', consensus_public_key: '{{ consensus_public_key }}'"
+        msg: "Failed to extract keys from output. node_public_key: '{{ node_public_key }}', consensus_public_key: '{{ consensus_public_key }}'. Raw output: {{ key_source.stdout }}"
       when: node_public_key == '' or consensus_public_key == ''
 
 - name: Create genesis file locally with generated keys
@@ -179,6 +200,9 @@
           skip_timeout_views = 32
           max_message_size_bytes = 104857600
           namespace = "_SEISMIC_BFT"
+          blocks_per_epoch = 10000
+          validator_minimum_stake = 32000000000
+          validator_maximum_stake = 32000000000
 
           {% for node in all_nodes %}
           [[validators]]

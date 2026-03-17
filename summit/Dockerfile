@@ -14,7 +14,8 @@ RUN git clone https://github.com/SeismicSystems/summit.git .
 RUN git fetch
 #RUN git checkout m/benchnet
 #RUN git checkout m/benchmarks
-RUN git checkout m/commit-on-notarize
+#RUN git checkout m/update-commonware-2026.3.0
+RUN git checkout main
 
 # Generate recipe file
 RUN cargo chef prepare --recipe-path recipe.json
